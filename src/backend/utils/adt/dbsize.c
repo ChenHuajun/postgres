@@ -292,6 +292,9 @@ calculate_relation_size(RelFileNode *rfn, BackendId backend, ForkNumber forknum)
 			snprintf(pathname, MAXPGPATH, "%s.%u",
 					 relationpath, segcount);
 
+		if(rfn->compress_algorithm != COMPRESS_TYPE_NONE)
+			strlcat(pathname, "_pc", MAXPGPATH);
+
 		if (stat(pathname, &fst) < 0)
 		{
 			if (errno == ENOENT)

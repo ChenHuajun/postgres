@@ -538,8 +538,8 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	}
 	pcAddr->nchunks = nchunks;
 
-	if(pg_atomic_read_u32(&pcMap->nblocks) < blocknum + 1)
-		pg_atomic_write_u32(&pcMap->nblocks, blocknum + 1);
+	if(pg_atomic_read_u32(&pcMap->nblocks) < blocknum % RELSEG_SIZE + 1)
+		pg_atomic_write_u32(&pcMap->nblocks, blocknum % RELSEG_SIZE + 1);
 
 	/*if(pc_msync(pcMap) != 0)
 		elog(LOG, "failed to msync page compress map %s",FilePathName(v->mdfd_vfd_pc));*/

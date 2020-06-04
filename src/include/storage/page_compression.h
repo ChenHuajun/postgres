@@ -61,7 +61,7 @@ typedef struct PageCompressData
 	(MAXALIGN(SizeOfPageCompressHeaderData) + SizeOfPageCompressAddr(chunk_size) * (blockno))
 
 #define GetPageCompressAddr(pcbuffer,chunk_size,blockno) \
-	(PageCompressAddr *)((char *)pcbuffer + OffsetOfPageCompressAddr(chunk_size,blockno))
+	(PageCompressAddr *)((char *)pcbuffer + OffsetOfPageCompressAddr(chunk_size,(blockno) / RELSEG_SIZE))
 
 #define OffsetOfFirstPageCompressChunck(chunk_size) \
 	(((OffsetOfPageCompressAddr(chunk_size, RELSEG_SIZE) + BLCKSZ - 1)/ BLCKSZ) * BLCKSZ)

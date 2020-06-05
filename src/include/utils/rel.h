@@ -294,6 +294,22 @@ typedef struct AutoVacOpts
 	float8		analyze_scale_factor;
 } AutoVacOpts;
 
+/* PageCompressOpts->compress_type values */
+typedef enum compressTypeOption
+{
+	COMPRESS_TYPE_NONE,
+	COMPRESS_TYPE_PGLZ,
+	COMPRESS_TYPE_ZSTD
+} compressTypeOption;
+
+ /* page compress related reloptions. */
+typedef struct PageCompressOpts
+{
+	compressTypeOption	compress_type; 				/* compress algorithm */
+	int					compress_chunk_size;		/* chunk size of compressed data */
+	int					compress_prealloc_chunks;	/* prealloced chunks to store compressed data */
+} PageCompressOpts;
+
 typedef struct StdRdOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
@@ -305,6 +321,7 @@ typedef struct StdRdOptions
 	int			parallel_workers;	/* max number of parallel workers */
 	bool		vacuum_index_cleanup;	/* enables index vacuuming and cleanup */
 	bool		vacuum_truncate;	/* enables vacuum to truncate a relation */
+	PageCompressOpts	compress; /* page compress related reloptions. */
 } StdRdOptions;
 
 #define HEAP_MIN_FILLFACTOR			10

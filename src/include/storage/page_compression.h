@@ -18,13 +18,17 @@
 typedef uint32 pc_chunk_number_t;
 
 /*
- * layout of Page Compress file:
+ * layout of files for Page Compress:
  *
+ * 1. page compression address file(_pca)
  * - PageCompressHeader
  * - PageCompressAddr[]
- * - chuncks of PageCompressData
+ *
+ * 2. page compression data file(_pcd)
+ * - PageCompressData[]
  *
  */
+
 typedef struct PageCompressHeader
 {
 	pg_atomic_uint32	nblocks;	/* number of total blocks in this segment */
@@ -63,13 +67,11 @@ typedef struct PageCompressData
 #define GetPageCompressAddr(pcbuffer,chunk_size,blockno) \
 	(PageCompressAddr *)((char *)pcbuffer + OffsetOfPageCompressAddr(chunk_size,(blockno) % RELSEG_SIZE))
 
-#define OffsetOfFirstPageCompressChunck(chunk_size) \
+#define SizeofPageCompressAddrFile(chunk_size) \
 	(((OffsetOfPageCompressAddr(chunk_size, RELSEG_SIZE) + BLCKSZ - 1)/ BLCKSZ) * BLCKSZ)
 
 #define OffsetOfPageCompressChunk(chunk_size, chunkno) \
-	(OffsetOfFirstPageCompressChunck(chunk_size) + (chunk_size) * (chunkno - 1))
-
-#define SizeofPageCompressMemoryMapArea(chunk_size) OffsetOfFirstPageCompressChunck(chunk_size)
+	((chunk_size) * (chunkno - 1))
 
 
 /* Compress function */

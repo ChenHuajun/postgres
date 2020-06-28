@@ -178,13 +178,12 @@ pc_mmap(int fd, int chunk_size)
 	PageCompressHeader  *map;
 	int 				file_size,pc_memory_map_size;
 
-	pc_memory_map_size = SizeofPageCompressMemoryMapArea(chunk_size);
+	pc_memory_map_size = SizeofPageCompressAddrFile(chunk_size);
 
 	file_size = lseek(fd, 0, SEEK_END);
-	if(file_size < pc_memory_map_size)
+	if(file_size != pc_memory_map_size)
 	{
-		//if (ftruncate(fd, pc_memory_map_size) != 0)
-		if (fallocate(fd, 0, 0, pc_memory_map_size) != 0)
+		if (ftruncate(fd, pc_memory_map_size) != 0)
 			return (PageCompressHeader *) MAP_FAILED;
 	}
 
@@ -218,7 +217,7 @@ pc_munmap(PageCompressHeader * map)
 #ifdef WIN32
 	return UnmapViewOfFile(map) ? 0 : -1;
 #else
-	return munmap(map, SizeofPageCompressMemoryMapArea(map->chunk_size));
+	return munmap(map, SizeofPageCompressAddrFile(map->chunk_size));
 #endif
 }
 
@@ -232,9 +231,9 @@ pc_msync(PageCompressHeader *map)
 	if (!enableFsync)
 		return 0;
 #ifdef WIN32
-	return FlushViewOfFile(map, SizeofPageCompressMemoryMapArea(map->chunk_size)) ? 0 : -1;
+	return FlushViewOfFile(map, SizeofPageCompressAddrFile(map->chunk_size)) ? 0 : -1;
 #else
-	return msync(map, SizeofPageCompressMemoryMapArea(map->chunk_size), MS_SYNC);
+	return msync(map, SizeofPageCompressAddrFile(map->chunk_size), MS_SYNC);
 #endif
 }
 

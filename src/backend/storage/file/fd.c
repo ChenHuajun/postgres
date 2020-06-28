@@ -196,8 +196,8 @@ typedef struct vfd
 	/* NB: fileName is malloc'd, and must be free'd when closing the VFD */
 	int			fileFlags;		/* open(2) flags for (re)opening the file */
 	mode_t		fileMode;		/* mode to pass to open(2) */
-	bool		with_pcmap;
-	PageCompressHeader	*pcmap;	/* memory map of page compress file's header and address area */
+	bool		with_pcmap;		/* is page compression relation */
+	PageCompressHeader	*pcmap;	/* memory map of page compression address file */
 } Vfd;
 
 /*
@@ -1159,8 +1159,11 @@ LruDelete(File file)
 
 	if (vfdP->with_pcmap && vfdP->pcmap != NULL)
 	{
-		if (pc_munmap(vfdP->pcmap))
-			elog(LOG, "Failed to unmap file %s: %m", vfdP->fileName);
+		if (pc_munmap(vfdP->pcmap) != 0)
+			ereport(vfdP->fdstate & FD_TEMP_FILE_LIMIT ? LOG : data_sync_elevel(LOG),
+					(errcode_for_file_access(),
+						errmsg("could not munmap file \"%s\": %m",
+							vfdP->fileName)));
 
 		vfdP->pcmap = NULL;
 	}
@@ -1849,7 +1852,10 @@ FileClose(File file)
 		if (vfdP->with_pcmap && vfdP->pcmap != NULL)
 		{
 			if (pc_munmap(vfdP->pcmap))
-				elog(LOG, "Failed to unmap file %s: %m", vfdP->fileName);
+				ereport(vfdP->fdstate & FD_TEMP_FILE_LIMIT ? LOG : data_sync_elevel(LOG),
+						(errcode_for_file_access(),
+							errmsg("could not munmap file \"%s\": %m",
+								vfdP->fileName)));
 
 			vfdP->pcmap = NULL;
 		}
@@ -2234,7 +2240,7 @@ SetupPageCompressMemoryMap(File file, int chunk_size, uint8 algorithm)
 	if(map == MAP_FAILED)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-					errmsg("Failed to map page compress file %s: %m",
+					errmsg("Failed to mmap page compression address file %s: %m",
 							vfdP->fileName)));
 
 	/* initialize page compress header */
@@ -2244,7 +2250,10 @@ SetupPageCompressMemoryMap(File file, int chunk_size, uint8 algorithm)
 		map->algorithm = algorithm;
 
 		if(pc_msync(map) != 0)
-			elog(LOG, "failed to msync page compress map %s",vfdP->fileName);
+			ereport(data_sync_elevel(ERROR),
+					(errcode_for_file_access(),
+						errmsg("could not msync file \"%s\": %m",
+							vfdP->fileName)));
 	}
 
 	vfdP->with_pcmap=true;
@@ -2281,7 +2290,7 @@ GetPageCompressMemoryMap(File file, int chunk_size)
 		if(map == MAP_FAILED)
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-					 errmsg("Failed to map page compress file %s: %m",
+					 errmsg("Failed to mmap page compression address file %s: %m",
 							 vfdP->fileName)));
 
 		vfdP->pcmap = map;

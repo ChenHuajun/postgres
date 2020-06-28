@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 
 #include "access/xlog.h"
 #include "access/xlogutils.h"
@@ -83,7 +84,8 @@
 typedef struct _MdfdVec
 {
 	File		mdfd_vfd;		/* fd number in fd.c's pool */
-	File		mdfd_vfd_pc;	/* page compress file 's fd number in fd.c's pool */
+	File		mdfd_vfd_pca;	/* page compression address file 's fd number in fd.c's pool */
+	File		mdfd_vfd_pcd;	/* page compression data file 's fd number in fd.c's pool */
 	BlockNumber mdfd_segno;		/* segment number, from 0 */
 } MdfdVec;
 
@@ -188,7 +190,7 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 	MdfdVec    *mdfd;
 	char	   *path;
 	char	   *pcfile_path;
-	File		fd,fd_pc;
+	File		fd,fd_pca,fd_pcd;
 
 	if (isRedo && reln->md_num_open_segs[forkNum] > 0)
 		return;					/* created and opened already... */
@@ -228,20 +230,25 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 		}
 	}
 
-	fd_pc = -1;
+	fd_pca = -1;
+	fd_pcd = -1;
 	if(IS_COMPRESSED_MAINFORK(reln,forkNum))
 	{
-		/* open page compress file */
-		pcfile_path = psprintf("%s_pc", path);
-		fd_pc = PathNameOpenFile(pcfile_path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
+		/* close main fork file */
+		FileClose(fd);
+		fd = -1;
 
-		if (fd_pc < 0)
+		/* open page compress address file */
+		pcfile_path = psprintf("%s_pca", path);
+		fd_pca = PathNameOpenFile(pcfile_path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
+
+		if (fd_pca < 0)
 		{
 			int			save_errno = errno;
 
 			if (isRedo)
-				fd_pc = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY);
-			if (fd_pc < 0)
+				fd_pca = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY);
+			if (fd_pca < 0)
 			{
 				/* be sure to report the error reported by create, not open */
 				errno = save_errno;
@@ -252,7 +259,28 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 		}
 		pfree(pcfile_path);
 
-		SetupPageCompressMemoryMap(fd_pc, PAGE_COMPRESS_CHUNK_SIZE(reln), PAGE_COMPRESS_ALGORITHM(reln));
+		/* open page compress data file */
+		pcfile_path = psprintf("%s_pcd", path);
+		fd_pcd = PathNameOpenFile(pcfile_path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
+
+		if (fd_pcd < 0)
+		{
+			int			save_errno = errno;
+
+			if (isRedo)
+				fd_pcd = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY);
+			if (fd_pcd < 0)
+			{
+				/* be sure to report the error reported by create, not open */
+				errno = save_errno;
+				ereport(ERROR,
+						(errcode_for_file_access(),
+						 errmsg("could not create file \"%s\": %m", pcfile_path)));
+			}
+		}
+		pfree(pcfile_path);
+
+		SetupPageCompressMemoryMap(fd_pca, PAGE_COMPRESS_CHUNK_SIZE(reln), PAGE_COMPRESS_ALGORITHM(reln));
 	}
 
 	pfree(path);
@@ -260,7 +288,8 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 	_fdvec_resize(reln, forkNum, 1);
 	mdfd = &reln->md_seg_fds[forkNum][0];
 	mdfd->mdfd_vfd = fd;
-	mdfd->mdfd_vfd_pc = fd_pc;
+	mdfd->mdfd_vfd_pca = fd_pca;
+	mdfd->mdfd_vfd_pca = fd_pcd;
 	mdfd->mdfd_segno = 0;
 }
 
@@ -347,10 +376,20 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 					(errcode_for_file_access(),
 					 errmsg("could not remove file \"%s\": %m", path)));
 
-		if((rnode.node.compress_algorithm != COMPRESS_TYPE_NONE &&
-			forkNum == MAIN_FORKNUM))
+		if(rnode.node.compress_algorithm != COMPRESS_TYPE_NONE &&
+			forkNum == MAIN_FORKNUM)
 		{
-			char *pcfile_path = psprintf("%s_pc", path);
+			char *pcfile_path;
+
+			pcfile_path = psprintf("%s_pca", path);
+			ret = unlink(pcfile_path);
+			if (ret < 0 && errno != ENOENT)
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						errmsg("could not remove file \"%s\": %m", pcfile_path)));
+			pfree(pcfile_path);
+
+			pcfile_path = psprintf("%s_pcd", path);
 			ret = unlink(pcfile_path);
 			if (ret < 0 && errno != ENOENT)
 				ereport(WARNING,
@@ -380,6 +419,52 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 			ereport(WARNING,
 					(errcode_for_file_access(),
 					 errmsg("could not truncate file \"%s\": %m", path)));
+
+		if(rnode.node.compress_algorithm != COMPRESS_TYPE_NONE &&
+			forkNum == MAIN_FORKNUM)
+		{
+			char				*pcfile_path;
+
+			/* clear page compression address file */
+			pcfile_path = psprintf("%s_pca", path);
+			fd = OpenTransientFile(pcfile_path, O_RDWR | PG_BINARY);
+			if (fd >= 0)
+			{
+				int		save_errno;
+
+				ret = ftruncate(fd, 0);
+				save_errno = errno;
+				CloseTransientFile(fd);
+				errno = save_errno;
+			}
+			else
+				ret = -1;
+			if (ret < 0 && errno != ENOENT)
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						errmsg("could not truncate file \"%s\": %m", pcfile_path)));
+			pfree(pcfile_path);
+
+			/* truncate page compression data file */
+			pcfile_path = psprintf("%s_pcd", path);
+			fd = OpenTransientFile(pcfile_path, O_RDWR | PG_BINARY);
+			if (fd >= 0)
+			{
+				int		save_errno;
+
+				ret = ftruncate(fd, 0);
+				save_errno = errno;
+				CloseTransientFile(fd);
+				errno = save_errno;
+			}
+			else
+				ret = -1;
+			if (ret < 0 && errno != ENOENT)
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						errmsg("could not truncate file \"%s\": %m", path)));
+			pfree(pcfile_path);
+		}
 
 		/* Register request to unlink first segment later */
 		register_unlink_segment(rnode, forkNum, 0 /* first seg */ );
@@ -420,7 +505,21 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 			if((rnode.node.compress_algorithm != COMPRESS_TYPE_NONE &&
 				forkNum == MAIN_FORKNUM))
 			{
-				char *pcfile_segpath = psprintf("%s_pc", segpath);
+				char	*pcfile_segpath;
+
+				pcfile_segpath = psprintf("%s_pca", segpath);
+				if (unlink(pcfile_segpath) < 0)
+				{
+					/* ENOENT is expected after the last segment... */
+					if (errno != ENOENT)
+						ereport(WARNING,
+								(errcode_for_file_access(),
+								errmsg("could not remove file \"%s\": %m", pcfile_segpath)));
+					break;
+				}
+				pfree(pcfile_segpath);
+
+				pcfile_segpath = psprintf("%s_pcd", segpath);
 				if (unlink(pcfile_segpath) < 0)
 				{
 					/* ENOENT is expected after the last segment... */
@@ -485,7 +584,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	if(prealloc_chunks > BLCKSZ / chunk_size -1)
 		prealloc_chunks = BLCKSZ / chunk_size -1;
 
-	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pc, chunk_size);
+	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
 	work_buffer = NULL;
@@ -514,7 +613,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
 				errmsg("invalid chunks %u of block %u in file \"%s\"",
-						pcAddr->allocated_chunks, blocknum, FilePathName(v->mdfd_vfd_pc))));
+						pcAddr->allocated_chunks, blocknum, FilePathName(v->mdfd_vfd_pca))));
 
 	for(i=0; i< pcAddr->allocated_chunks; i++)
 	{
@@ -522,7 +621,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					errmsg("invalid chunk number %u of block %u in file \"%s\"",
-							pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pc))));
+							pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pca))));
 	}
 
 	need_chunks = prealloc_chunks > nchunks ? prealloc_chunks : nchunks;
@@ -541,9 +640,6 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	if(pg_atomic_read_u32(&pcMap->nblocks) < blocknum % RELSEG_SIZE + 1)
 		pg_atomic_write_u32(&pcMap->nblocks, blocknum % RELSEG_SIZE + 1);
 
-	/*if(pc_msync(pcMap) != 0)
-		elog(LOG, "failed to msync page compress map %s",FilePathName(v->mdfd_vfd_pc));*/
-
 	for(i=0; i < nchunks;i++)
 	{
 		buffer_pos = work_buffer + chunk_size * i;
@@ -556,19 +652,19 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		}
 		write_amount = chunk_size * range;
 
-		if ((nbytes = FileWrite(v->mdfd_vfd_pc, buffer_pos, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
+		if ((nbytes = FileWrite(v->mdfd_vfd_pcd, buffer_pos, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
 		{
 			if (nbytes < 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
 						errmsg("could not extend file \"%s\": %m",
-								FilePathName(v->mdfd_vfd_pc)),
+								FilePathName(v->mdfd_vfd_pcd)),
 						errhint("Check free disk space.")));
 			/* short write: complain appropriately */
 			ereport(ERROR,
 					(errcode(ERRCODE_DISK_FULL),
 					errmsg("could not extend file \"%s\": wrote only %d of %d bytes at block %u",
-							FilePathName(v->mdfd_vfd_pc),
+							FilePathName(v->mdfd_vfd_pcd),
 							nbytes, write_amount, blocknum),
 					errhint("Check free disk space.")));
 		}
@@ -589,19 +685,19 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 			}
 			write_amount = chunk_size * range;
 
-			if ((nbytes = FileWrite(v->mdfd_vfd_pc, zero_buffer, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
+			if ((nbytes = FileWrite(v->mdfd_vfd_pcd, zero_buffer, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
 			{
 				if (nbytes < 0)
 					ereport(ERROR,
 							(errcode_for_file_access(),
 							errmsg("could not extend file \"%s\": %m",
-									FilePathName(v->mdfd_vfd_pc)),
+									FilePathName(v->mdfd_vfd_pcd)),
 							errhint("Check free disk space.")));
 				/* short write: complain appropriately */
 				ereport(ERROR,
 						(errcode(ERRCODE_DISK_FULL),
 						errmsg("could not extend file \"%s\": wrote only %d of %d bytes at block %u",
-								FilePathName(v->mdfd_vfd_pc),
+								FilePathName(v->mdfd_vfd_pcd),
 								nbytes, write_amount, blocknum),
 						errhint("Check free disk space.")));
 			}
@@ -699,39 +795,26 @@ mdopenfork(SMgrRelation reln, ForkNumber forknum, int behavior)
 {
 	MdfdVec    *mdfd;
 	char	   *path;
-	char	   *pcfile_path;
-	File		fd,fd_pc;
+	File		fd,fd_pca,fd_pcd;
 
 	/* No work if already open */
 	if (reln->md_num_open_segs[forknum] > 0)
 		return &reln->md_seg_fds[forknum][0];
 
-	path = relpath(reln->smgr_rnode, forknum);
-
-	fd = PathNameOpenFile(path, O_RDWR | PG_BINARY);
-
-	if (fd < 0)
-	{
-		if ((behavior & EXTENSION_RETURN_NULL) &&
-			FILE_POSSIBLY_DELETED(errno))
-		{
-			pfree(path);
-			return NULL;
-		}
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not open file \"%s\": %m", path)));
-	}
-
-	fd_pc = -1;
+	fd = -1;
+	fd_pca = -1;
+	fd_pcd = -1;
 	if(IS_COMPRESSED_MAINFORK(reln,forknum))
 	{
-		/* open page compress file */
-		pcfile_path = psprintf("%s_pc", path);
+		char	   *pcfile_path;
 
-		fd_pc = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY);
+		path = relpath(reln->smgr_rnode, forknum);
 
-		if (fd_pc < 0)
+		/* open page compression address file */
+		pcfile_path = psprintf("%s_pca", path);
+		fd_pca = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY);
+
+		if (fd_pca < 0)
 		{
 			if ((behavior & EXTENSION_RETURN_NULL) &&
 				FILE_POSSIBLY_DELETED(errno))
@@ -746,7 +829,45 @@ mdopenfork(SMgrRelation reln, ForkNumber forknum, int behavior)
 		}
 		pfree(pcfile_path);
 
-		SetupPageCompressMemoryMap(fd_pc, PAGE_COMPRESS_CHUNK_SIZE(reln), PAGE_COMPRESS_ALGORITHM(reln));
+		/* open page compression data file */
+		pcfile_path = psprintf("%s_pcd", path);
+		fd_pcd = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY);
+
+		if (fd_pcd < 0)
+		{
+			if ((behavior & EXTENSION_RETURN_NULL) &&
+				FILE_POSSIBLY_DELETED(errno))
+			{
+				pfree(path);
+				pfree(pcfile_path);
+				return NULL;
+			}
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not open file \"%s\": %m", pcfile_path)));
+		}
+		pfree(pcfile_path);
+
+		SetupPageCompressMemoryMap(fd_pca, PAGE_COMPRESS_CHUNK_SIZE(reln), PAGE_COMPRESS_ALGORITHM(reln));
+	}
+	else
+	{
+		path = relpath(reln->smgr_rnode, forknum);
+
+		fd = PathNameOpenFile(path, O_RDWR | PG_BINARY);
+
+		if (fd < 0)
+		{
+			if ((behavior & EXTENSION_RETURN_NULL) &&
+				FILE_POSSIBLY_DELETED(errno))
+			{
+				pfree(path);
+				return NULL;
+			}
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					errmsg("could not open file \"%s\": %m", path)));
+		}
 	}
 
 	pfree(path);
@@ -754,7 +875,8 @@ mdopenfork(SMgrRelation reln, ForkNumber forknum, int behavior)
 	_fdvec_resize(reln, forknum, 1);
 	mdfd = &reln->md_seg_fds[forknum][0];
 	mdfd->mdfd_vfd = fd;
-	mdfd->mdfd_vfd_pc = fd_pc;
+	mdfd->mdfd_vfd_pca = fd_pca;
+	mdfd->mdfd_vfd_pcd = fd_pcd;
 	mdfd->mdfd_segno = 0;
 
 	Assert(_mdnblocks(reln, forknum, mdfd) <= ((BlockNumber) RELSEG_SIZE));
@@ -790,11 +912,13 @@ mdclose(SMgrRelation reln, ForkNumber forknum)
 	{
 		MdfdVec    *v = &reln->md_seg_fds[forknum][nopensegs - 1];
 
-		FileClose(v->mdfd_vfd);
 		if(IS_COMPRESSED_MAINFORK(reln,forknum))
 		{
-			FileClose(v->mdfd_vfd_pc);
+			FileClose(v->mdfd_vfd_pca);
+			FileClose(v->mdfd_vfd_pcd);
 		}
+		else
+			FileClose(v->mdfd_vfd);
 		_fdvec_resize(reln, forknum, nopensegs - 1);
 		nopensegs--;
 	}
@@ -817,7 +941,50 @@ mdprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum)
 
 	if(IS_COMPRESSED_MAINFORK(reln,forknum))
 	{
-		/* TODO not imp */
+		int					chunk_size,i,range;
+		PageCompressHeader	*pcMap;
+		PageCompressAddr	*pcAddr;
+		
+		chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
+		pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
+		pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
+
+		/* check chunk number */
+		if(pcAddr->nchunks < 0 || pcAddr->nchunks > BLCKSZ / chunk_size)
+		{
+			if (zero_damaged_pages || InRecovery)
+				return true;
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						errmsg("invalid chunks %u of block %u in file \"%s\"",
+								pcAddr->nchunks, blocknum, FilePathName(v->mdfd_vfd_pca))));
+		}
+
+		for(i=0; i< pcAddr->nchunks; i++)
+		{
+			if(pcAddr->chunknos[i] <= 0 || pcAddr->chunknos[i] > (BLCKSZ / chunk_size) * RELSEG_SIZE)
+			{
+				if (zero_damaged_pages || InRecovery)
+					return true;
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_DATA_CORRUPTED),
+							errmsg("invalid chunk number %u of block %u in file \"%s\"",
+									pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pca))));
+			}
+
+			seekpos = (off_t) OffsetOfPageCompressChunk(chunk_size, pcAddr->chunknos[i]);
+			range = 1;
+			while(i < pcAddr->nchunks - 1 && 
+					pcAddr->chunknos[i + 1] == pcAddr->chunknos[i] + 1)
+			{
+				range++;
+				i++;
+			}
+
+			(void) FilePrefetch(v->mdfd_vfd_pcd, seekpos, chunk_size * range, WAIT_EVENT_DATA_FILE_PREFETCH);
+		}
 	}
 	else
 	{
@@ -853,8 +1020,6 @@ mdwriteback(SMgrRelation reln, ForkNumber forknum,
 		MdfdVec    *v;
 		int			segnum_start,
 					segnum_end;
-		int			chunk_size;
-		PageCompressHeader	*pcMap;
 
 		v = _mdfd_getseg(reln, forknum, blocknum, true /* not used */ ,
 						 EXTENSION_RETURN_NULL);
@@ -879,14 +1044,55 @@ mdwriteback(SMgrRelation reln, ForkNumber forknum,
 
 		if(IS_COMPRESSED_MAINFORK(reln,forknum))
 		{
+			int					i,chunk_size;
+			PageCompressHeader	*pcMap;
+			PageCompressAddr	*pcAddr;
+			BlockNumber			iblock;
+			pc_chunk_number_t	seekpos_chunk,last_chunk,nchunks;
 			
 			chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
-			pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pc, chunk_size);
+			pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 
-			if(pc_msync(pcMap) != 0)
-				elog(LOG, "failed to msync page compress map %s",FilePathName(v->mdfd_vfd_pc));
-			/* TODO may be need to optimize */
-			FileSync(v->mdfd_vfd_pc, WAIT_EVENT_DATA_FILE_FLUSH);
+			seekpos_chunk = -1;
+			last_chunk = -1;
+			for(iblock = 0; iblock < nflush; iblock++)
+			{
+				/* flush one block */
+				pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum + iblock);
+
+				for(i=0; i < pcAddr->nchunks; i++)
+				{
+					if(seekpos_chunk == -1)
+					{
+						seekpos_chunk = pcAddr->chunknos[i];
+						last_chunk = seekpos_chunk;
+					}
+					else if(pcAddr->chunknos[i] == last_chunk + 1)
+					{
+						last_chunk++;
+					}
+					else
+					{
+						/* from here the chunks is discontinuous, flush previous chuncks range */
+						seekpos = (off_t) OffsetOfPageCompressChunk(chunk_size, seekpos_chunk);
+						nchunks = 1 + last_chunk - seekpos_chunk;
+
+						FileWriteback(v->mdfd_vfd_pcd, seekpos, (off_t) chunk_size * nchunks, WAIT_EVENT_DATA_FILE_FLUSH);
+
+						seekpos_chunk = pcAddr->chunknos[i];
+						last_chunk = seekpos_chunk;
+					}
+				}
+			}
+
+			/* flush the rest chuncks */
+			if(seekpos_chunk != -1)
+			{
+				seekpos = (off_t) OffsetOfPageCompressChunk(chunk_size, seekpos_chunk);
+				nchunks = 1 + last_chunk - seekpos_chunk;
+
+				FileWriteback(v->mdfd_vfd_pcd, seekpos, (off_t) chunk_size * nchunks, WAIT_EVENT_DATA_FILE_FLUSH);
+			}
 		}
 		else
 		{
@@ -920,7 +1126,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 					EXTENSION_FAIL | EXTENSION_CREATE_RECOVERY);
 
 	chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
-	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pc, chunk_size);
+	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
 	/* check chunk number */
@@ -935,7 +1141,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					errmsg("invalid chunks %u of block %u in file \"%s\"",
-							pcAddr->nchunks, blocknum, FilePathName(v->mdfd_vfd_pc))));
+							pcAddr->nchunks, blocknum, FilePathName(v->mdfd_vfd_pca))));
 	}
 
 	for(i=0; i< pcAddr->nchunks; i++)
@@ -951,7 +1157,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 				ereport(ERROR,
 						(errcode(ERRCODE_DATA_CORRUPTED),
 						errmsg("invalid chunk number %u of block %u in file \"%s\"",
-								pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pc))));
+								pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pca))));
 		}
 	}
 
@@ -975,7 +1181,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 											reln->smgr_rnode.node.relNode,
 											reln->smgr_rnode.backend);
 
-		nbytes = FileRead(v->mdfd_vfd_pc, buffer_pos, read_amount, seekpos, WAIT_EVENT_DATA_FILE_READ);
+		nbytes = FileRead(v->mdfd_vfd_pcd, buffer_pos, read_amount, seekpos, WAIT_EVENT_DATA_FILE_READ);
 
 		TRACE_POSTGRESQL_SMGR_MD_READ_DONE(forknum, blocknum,
 										reln->smgr_rnode.node.spcNode,
@@ -991,7 +1197,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 				ereport(ERROR,
 						(errcode_for_file_access(),
 						errmsg("could not read block %u in file \"%s\": %m",
-								blocknum, FilePathName(v->mdfd_vfd_pc))));
+								blocknum, FilePathName(v->mdfd_vfd_pcd))));
 
 			/*
 			* Short read: we are at or past EOF, or we read a partial block at
@@ -1011,7 +1217,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 				ereport(ERROR,
 						(errcode(ERRCODE_DATA_CORRUPTED),
 						errmsg("could not read block %u in file \"%s\": read only %d of %d bytes",
-								blocknum, FilePathName(v->mdfd_vfd_pc),
+								blocknum, FilePathName(v->mdfd_vfd_pcd),
 								nbytes, read_amount)));
 		}
 		
@@ -1045,7 +1251,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 				ereport(ERROR,
 						(errcode(ERRCODE_DATA_CORRUPTED),
 						errmsg("could not decompress block %u in file \"%s\": decompress %d of %d bytes",
-								blocknum, FilePathName(v->mdfd_vfd_pc),
+								blocknum, FilePathName(v->mdfd_vfd_pcd),
 								nbytes, BLCKSZ)));
 		}
 	}
@@ -1152,7 +1358,7 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
 	algorithm = PAGE_COMPRESS_ALGORITHM(reln);
 
-	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pc, chunk_size);
+	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
 	work_buffer = compress_page(buffer, chunk_size, algorithm, &nchunks);
@@ -1169,7 +1375,7 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
 				errmsg("invalid chunks %u of block %u in file \"%s\"",
-						pcAddr->allocated_chunks, blocknum, FilePathName(v->mdfd_vfd_pc))));
+						pcAddr->allocated_chunks, blocknum, FilePathName(v->mdfd_vfd_pca))));
 
 	for(i=0; i< pcAddr->allocated_chunks; i++)
 	{
@@ -1177,7 +1383,7 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					errmsg("invalid chunk number %u of block %u in file \"%s\"",
-							pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pc))));
+							pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pca))));
 	}
 
 	/* TODO automatic read ? */
@@ -1192,10 +1398,6 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	}
 	pcAddr->nchunks = nchunks;
 
-	/*if(pc_msync(pcMap) != 0)
-		elog(LOG, "failed to msync page compress map %s",FilePathName(v->mdfd_vfd_pc));
-	*/
-
 	for(i=0; i < nchunks;i++)
 	{
 		buffer_pos = work_buffer + chunk_size * i;
@@ -1208,19 +1410,19 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		}
 		write_amount = chunk_size * range;
 
-		if ((nbytes = FileWrite(v->mdfd_vfd_pc, buffer_pos, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
+		if ((nbytes = FileWrite(v->mdfd_vfd_pcd, buffer_pos, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
 		{
 			if (nbytes < 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
 						errmsg("could not write block %u in file \"%s\": %m",
-								blocknum, FilePathName(v->mdfd_vfd_pc))));
+								blocknum, FilePathName(v->mdfd_vfd_pcd))));
 			/* short write: complain appropriately */
 			ereport(ERROR,
 					(errcode(ERRCODE_DISK_FULL),
 					errmsg("could not write block %u in file \"%s\": wrote only %d of %d bytes",
 							blocknum,
-							FilePathName(v->mdfd_vfd_pc),
+							FilePathName(v->mdfd_vfd_pcd),
 							nbytes, write_amount),
 					errhint("Check free disk space.")));
 		}
@@ -1413,19 +1615,31 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 			if(IS_COMPRESSED_MAINFORK(reln,forknum))
 			{
 				chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
-				pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pc, chunk_size);
+				pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 
-				memset((char *)pcMap + SizeOfPageCompressHeaderData, 0x00, SizeofPageCompressMemoryMapArea(chunk_size) - SizeOfPageCompressHeaderData);
 				pg_atomic_write_u32(&pcMap->nblocks, 0);
 				pg_atomic_write_u32(&pcMap->allocated_chunks, 0);
-				if(pc_msync(pcMap) != 0)
-					elog(LOG, "failed to msync page compress map %s",FilePathName(v->mdfd_vfd_pc));
+				memset((char *)pcMap + SizeOfPageCompressHeaderData,
+						0x00,
+						SizeofPageCompressAddrFile(chunk_size) - SizeOfPageCompressHeaderData);
 
-				if (FileTruncate(v->mdfd_vfd_pc, SizeofPageCompressMemoryMapArea(chunk_size), WAIT_EVENT_DATA_FILE_TRUNCATE) < 0)
+				if(pc_msync(pcMap) != 0)
+					ereport(data_sync_elevel(ERROR),
+							(errcode_for_file_access(),
+								errmsg("could not msync file \"%s\": %m",
+									FilePathName(v->mdfd_vfd_pca))));
+
+				if (FileSync(v->mdfd_vfd_pca, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
+					ereport(data_sync_elevel(ERROR),
+							(errcode_for_file_access(),
+							errmsg("could not fsync file \"%s\": %m",
+									FilePathName(v->mdfd_vfd_pca))));
+
+				if (FileTruncate(v->mdfd_vfd_pcd, SizeofPageCompressAddrFile(chunk_size), WAIT_EVENT_DATA_FILE_TRUNCATE) < 0)
 					ereport(ERROR,
 							(errcode_for_file_access(),
 							errmsg("could not truncate file \"%s\": %m",
-									FilePathName(v->mdfd_vfd_pc))));
+									FilePathName(v->mdfd_vfd_pcd))));
 			}
 			else{
 				if (FileTruncate(v->mdfd_vfd, 0, WAIT_EVENT_DATA_FILE_TRUNCATE) < 0)
@@ -1442,7 +1656,10 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 			Assert(v != &reln->md_seg_fds[forknum][0]);
 
 			if(IS_COMPRESSED_MAINFORK(reln,forknum))
-				FileClose(v->mdfd_vfd_pc);
+			{
+				FileClose(v->mdfd_vfd_pca);
+				FileClose(v->mdfd_vfd_pcd);
+			}
 			else
 				FileClose(v->mdfd_vfd);
 
@@ -1453,7 +1670,7 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 			if(IS_COMPRESSED_MAINFORK(reln,forknum))
 			{
 				chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
-				pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pc, chunk_size);
+				pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 
 				for(blk = nblocks - priorblocks; blk < RELSEG_SIZE; blk++)
 				{
@@ -1462,8 +1679,18 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 				}
 
 				pg_atomic_write_u32(&pcMap->nblocks, nblocks - priorblocks);
+
 				if(pc_msync(pcMap) != 0)
-					elog(LOG, "failed to msync page compress map %s",FilePathName(v->mdfd_vfd_pc));
+					ereport(data_sync_elevel(ERROR),
+							(errcode_for_file_access(),
+								errmsg("could not msync file \"%s\": %m",
+									FilePathName(v->mdfd_vfd_pca))));
+
+				if (FileSync(v->mdfd_vfd_pca, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
+					ereport(data_sync_elevel(ERROR),
+							(errcode_for_file_access(),
+							errmsg("could not fsync file \"%s\": %m",
+									FilePathName(v->mdfd_vfd_pca))));
 			}
 			else
 			{
@@ -1538,15 +1765,27 @@ mdimmedsync(SMgrRelation reln, ForkNumber forknum)
 
 		if(IS_COMPRESSED_MAINFORK(reln,forknum))
 		{
-			PageCompressHeader *pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pc, PAGE_COMPRESS_CHUNK_SIZE(reln));
-			if(pc_msync(pcMap) != 0)
-				elog(LOG, "failed to msync page compress map %s",FilePathName(v->mdfd_vfd_pc));
+			PageCompressHeader *pcMap;
 
-			if (FileSync(v->mdfd_vfd_pc, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
+			pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, PAGE_COMPRESS_CHUNK_SIZE(reln));
+
+			if(pc_msync(pcMap) != 0)
+				ereport(data_sync_elevel(ERROR),
+						(errcode_for_file_access(),
+							errmsg("could not msync file \"%s\": %m",
+								FilePathName(v->mdfd_vfd_pca))));
+
+			if (FileSync(v->mdfd_vfd_pca, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
 				ereport(data_sync_elevel(ERROR),
 						(errcode_for_file_access(),
 						errmsg("could not fsync file \"%s\": %m",
-								FilePathName(v->mdfd_vfd_pc))));
+								FilePathName(v->mdfd_vfd_pca))));
+
+			if (FileSync(v->mdfd_vfd_pcd, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
+				ereport(data_sync_elevel(ERROR),
+						(errcode_for_file_access(),
+						errmsg("could not fsync file \"%s\": %m",
+								FilePathName(v->mdfd_vfd_pcd))));
 		}
 		else
 		{
@@ -1561,7 +1800,10 @@ mdimmedsync(SMgrRelation reln, ForkNumber forknum)
 		if (segno > min_inactive_seg)
 		{
 			if(IS_COMPRESSED_MAINFORK(reln,forknum))
-				FileClose(v->mdfd_vfd_pc);
+			{
+				FileClose(v->mdfd_vfd_pca);
+				FileClose(v->mdfd_vfd_pcd);
+			}
 			else
 				FileClose(v->mdfd_vfd);
 			_fdvec_resize(reln, forknum, segno - 1);
@@ -1597,15 +1839,27 @@ register_dirty_segment(SMgrRelation reln, ForkNumber forknum, MdfdVec *seg)
 
 		if(IS_COMPRESSED_MAINFORK(reln,forknum))
 		{
-			PageCompressHeader *pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(seg->mdfd_vfd_pc, PAGE_COMPRESS_CHUNK_SIZE(reln));
+			PageCompressHeader *pcMap;
+
+			pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(seg->mdfd_vfd_pca, PAGE_COMPRESS_CHUNK_SIZE(reln));
+
 			if(pc_msync(pcMap) != 0)
-				elog(LOG, "failed to msync page compress map %s",FilePathName(seg->mdfd_vfd_pc));
+				ereport(data_sync_elevel(ERROR),
+						(errcode_for_file_access(),
+							errmsg("could not msync file \"%s\": %m",
+								FilePathName(seg->mdfd_vfd_pca))));
 		
-			if (FileSync(seg->mdfd_vfd_pc, WAIT_EVENT_DATA_FILE_SYNC) < 0)
+			if (FileSync(seg->mdfd_vfd_pca, WAIT_EVENT_DATA_FILE_SYNC) < 0)
 				ereport(data_sync_elevel(ERROR),
 						(errcode_for_file_access(),
 						errmsg("could not fsync file \"%s\": %m",
-								FilePathName(seg->mdfd_vfd_pc))));
+								FilePathName(seg->mdfd_vfd_pca))));
+
+			if (FileSync(seg->mdfd_vfd_pcd, WAIT_EVENT_DATA_FILE_SYNC) < 0)
+				ereport(data_sync_elevel(ERROR),
+						(errcode_for_file_access(),
+						errmsg("could not fsync file \"%s\": %m",
+								FilePathName(seg->mdfd_vfd_pcd))));
 		}else
 		{
 			if (FileSync(seg->mdfd_vfd, WAIT_EVENT_DATA_FILE_SYNC) < 0)
@@ -1767,7 +2021,7 @@ _mdfd_openseg(SMgrRelation reln, ForkNumber forknum, BlockNumber segno,
 			  int oflags)
 {
 	MdfdVec    *v;
-	File		fd,fd_pc;
+	File		fd,fd_pca,fd_pcd;
 	char	   *fullpath,*pcfile_path;
 
 	fullpath = _mdfd_segpath(reln, forknum, segno);
@@ -1781,22 +2035,35 @@ _mdfd_openseg(SMgrRelation reln, ForkNumber forknum, BlockNumber segno,
 		return NULL;
 	}
 
-	fd_pc = -1;
+	fd_pca = -1;
+	fd_pcd = -1;
 	if(IS_COMPRESSED_MAINFORK(reln,forknum))
 	{
-		/* open page compress file */
-		pcfile_path = psprintf("%s_pc", fullpath);
-		fd_pc = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY | oflags);
+		/* open page compress address file */
+		pcfile_path = psprintf("%s_pca", fullpath);
+		fd_pca = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY | oflags);
 
 		pfree(pcfile_path);
 
-		if (fd_pc < 0)
+		if (fd_pca < 0)
 		{
 			pfree(fullpath);
 			return NULL;
 		}
 
-		SetupPageCompressMemoryMap(fd_pc, PAGE_COMPRESS_CHUNK_SIZE(reln), PAGE_COMPRESS_ALGORITHM(reln));
+		/* open page compress data file */
+		pcfile_path = psprintf("%s_pcd", fullpath);
+		fd_pcd = PathNameOpenFile(pcfile_path, O_RDWR | PG_BINARY | oflags);
+
+		pfree(pcfile_path);
+
+		if (fd_pcd < 0)
+		{
+			pfree(fullpath);
+			return NULL;
+		}
+
+		SetupPageCompressMemoryMap(fd_pca, PAGE_COMPRESS_CHUNK_SIZE(reln), PAGE_COMPRESS_ALGORITHM(reln));
 	}
 
 	pfree(fullpath);
@@ -1812,7 +2079,8 @@ _mdfd_openseg(SMgrRelation reln, ForkNumber forknum, BlockNumber segno,
 	/* fill the entry */
 	v = &reln->md_seg_fds[forknum][segno];
 	v->mdfd_vfd = fd;
-	v->mdfd_vfd_pc = fd_pc;
+	v->mdfd_vfd_pca = fd_pca;
+	v->mdfd_vfd_pca = fd_pcd;
 	v->mdfd_segno = segno;
 
 	Assert(_mdnblocks(reln, forknum, v) <= ((BlockNumber) RELSEG_SIZE));
@@ -1962,7 +2230,7 @@ _mdnblocks(SMgrRelation reln, ForkNumber forknum, MdfdVec *seg)
 
 	if(IS_COMPRESSED_MAINFORK(reln,forknum))
 	{
-		pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(seg->mdfd_vfd_pc, PAGE_COMPRESS_CHUNK_SIZE(reln));
+		pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(seg->mdfd_vfd_pca, PAGE_COMPRESS_CHUNK_SIZE(reln));
 		return (BlockNumber) pg_atomic_read_u32(&pcMap->nblocks);
 	}
 
@@ -1990,15 +2258,100 @@ mdsyncfiletag(const FileTag *ftag, char *path)
 	bool		need_to_close;
 	int			result,
 				save_errno;
-	PageCompressHeader	*pcMap;
+
+	if(IS_COMPRESSED_MAINFORK(reln,ftag->forknum))
+	{
+		PageCompressHeader	*pcMap;
+
+		/* sync page compression address file */
+		/* See if we already have the file open, or need to open it. */
+		if (ftag->segno < reln->md_num_open_segs[ftag->forknum])
+		{
+			file = reln->md_seg_fds[ftag->forknum][ftag->segno].mdfd_vfd_pca;
+			strlcpy(path, FilePathName(file), MAXPGPATH);
+			need_to_close = false;
+		}
+		else
+		{
+			char	   *p;
+
+			p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
+			snprintf(path, MAXPGPATH, "%s_pca", p);
+			pfree(p);
+
+			file = PathNameOpenFile(path, O_RDWR | PG_BINARY);
+			if (file < 0)
+				return -1;
+
+			need_to_close = true;
+
+			SetupPageCompressMemoryMap(file, PAGE_COMPRESS_CHUNK_SIZE(reln), PAGE_COMPRESS_ALGORITHM(reln));
+		}
+
+		pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(file, PAGE_COMPRESS_CHUNK_SIZE(reln));
+		result = pc_msync(pcMap);
+		save_errno = errno;
+
+		if(result != 0)
+		{
+			if (need_to_close)
+				FileClose(file);
+
+			errno = save_errno;
+			return result;
+		}
+
+		/* Sync the page compression address file. */
+		result = FileSync(file, WAIT_EVENT_DATA_FILE_SYNC);
+		save_errno = errno;
+
+		if (need_to_close)
+			FileClose(file);
+		
+		if(result != 0)
+		{
+			errno = save_errno;
+			return result;
+		}
+
+		/* sync page compression data file */
+		/* See if we already have the file open, or need to open it. */
+		if (ftag->segno < reln->md_num_open_segs[ftag->forknum])
+		{
+			file = reln->md_seg_fds[ftag->forknum][ftag->segno].mdfd_vfd_pcd;
+			strlcpy(path, FilePathName(file), MAXPGPATH);
+			need_to_close = false;
+		}
+		else
+		{
+			char	   *p;
+
+			p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
+			snprintf(path, MAXPGPATH, "%s_pcd", p);
+			pfree(p);
+
+			file = PathNameOpenFile(path, O_RDWR | PG_BINARY);
+			if (file < 0)
+				return -1;
+
+			need_to_close = true;
+		}
+
+		/* Sync the page compression data file. */
+		result = FileSync(file, WAIT_EVENT_DATA_FILE_SYNC);
+		save_errno = errno;
+
+		if (need_to_close)
+			FileClose(file);
+		
+		errno = save_errno;
+		return result;
+	}
 
 	/* See if we already have the file open, or need to open it. */
 	if (ftag->segno < reln->md_num_open_segs[ftag->forknum])
 	{
-		if(IS_COMPRESSED_MAINFORK(reln,ftag->forknum))
-			file = reln->md_seg_fds[ftag->forknum][ftag->segno].mdfd_vfd_pc;
-		else
-			file = reln->md_seg_fds[ftag->forknum][ftag->segno].mdfd_vfd;
+		file = reln->md_seg_fds[ftag->forknum][ftag->segno].mdfd_vfd;
 		strlcpy(path, FilePathName(file), MAXPGPATH);
 		need_to_close = false;
 	}
@@ -2007,26 +2360,13 @@ mdsyncfiletag(const FileTag *ftag, char *path)
 		char	   *p;
 
 		p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
-		if(IS_COMPRESSED_MAINFORK(reln,ftag->forknum))
-			snprintf(path, MAXPGPATH, "%s_pc", p);
-		else
-			strlcpy(path, p, MAXPGPATH);
+		strlcpy(path, p, MAXPGPATH);
 		pfree(p);
 
 		file = PathNameOpenFile(path, O_RDWR | PG_BINARY);
 		if (file < 0)
 			return -1;
 		need_to_close = true;
-
-		if(IS_COMPRESSED_MAINFORK(reln,ftag->forknum))
-			SetupPageCompressMemoryMap(file, PAGE_COMPRESS_CHUNK_SIZE(reln), PAGE_COMPRESS_ALGORITHM(reln));
-	}
-
-	if(IS_COMPRESSED_MAINFORK(reln,ftag->forknum))
-	{
-		pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(file, PAGE_COMPRESS_CHUNK_SIZE(reln));
-		if(pc_msync(pcMap) != 0)
-			elog(LOG, "failed to msync page compress map %s",FilePathName(file));
 	}
 
 	/* Sync the file. */
@@ -2063,8 +2403,14 @@ mdunlinkfiletag(const FileTag *ftag, char *path)
 	if((ret == 0 || errno == ENOENT) &&
 		IS_COMPRESSED_MAINFORK(reln,ftag->forknum))
 	{
-		snprintf(path, MAXPGPATH, "%s_pc", p);
+		snprintf(path, MAXPGPATH, "%s_pca", p);
 		ret = unlink(path);
+
+		if(ret == 0 || errno == ENOENT)
+		{
+			snprintf(path, MAXPGPATH, "%s_pcd", p);
+			ret = unlink(path);
+		}
 	}
 
 	pfree(p);

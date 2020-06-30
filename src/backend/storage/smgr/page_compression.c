@@ -24,6 +24,11 @@
 
 #ifdef USE_ZSTD
 #include <zstd.h>
+
+#define DEFAULT_ZSTD_COMPRESSION_LEVEL 3
+#define MIN_ZSTD_COMPRESSION_LEVEL ZSTD_minCLevel()
+#define MAX_ZSTD_COMPRESSION_LEVEL 19
+
 #endif
 
 #include "storage/page_compression.h"
@@ -40,7 +45,7 @@
  *		able to save at least 1 chunk of space, otherwise it returns NULL.
  */
 char *
-compress_page(const char *src, int chunck_size, uint8 algorithm, int *nchuncks)
+compress_page(const char *src, int chunck_size, uint8 algorithm, int8 level, int *nchuncks)
 {
 	int 		compressed_size,targetDstSize;
 	PageCompressData *pcdptr;
@@ -72,11 +77,14 @@ compress_page(const char *src, int chunck_size, uint8 algorithm, int *nchuncks)
 			dst = palloc(out_len);
 			pcdptr = (PageCompressData *)dst;
 
+			if(level == 0 || level < ZSTD_minCLevel() || level > ZSTD_maxCLevel() )
+				level = DEFAULT_ZSTD_COMPRESSION_LEVEL;
+
 			compressed_size = ZSTD_compress(pcdptr->data,
 							out_len,
 							src + SizeOfPageHeaderData,
 							BLCKSZ - SizeOfPageHeaderData,
-							3);
+							level);
 
 			if (ZSTD_isError(compressed_size))
 			{

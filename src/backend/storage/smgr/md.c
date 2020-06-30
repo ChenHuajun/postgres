@@ -125,6 +125,7 @@ static MemoryContext MdCxt;		/* context for all MdfdVec objects */
 	(reln->smgr_rnode.node.compress_algorithm != COMPRESS_TYPE_NONE && forkNum == MAIN_FORKNUM)
 
 #define PAGE_COMPRESS_ALGORITHM(reln) (reln->smgr_rnode.node.compress_algorithm)
+#define PAGE_COMPRESS_LEVEL(reln) (reln->smgr_rnode.node.compress_level)
 #define PAGE_COMPRESS_CHUNK_SIZE(reln) (reln->smgr_rnode.node.compress_chunk_size)
 #define PAGE_COMPRESS_PREALLOC_CHUNKS(reln) (reln->smgr_rnode.node.compress_prealloc_chunks)
 
@@ -289,7 +290,7 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 	mdfd = &reln->md_seg_fds[forkNum][0];
 	mdfd->mdfd_vfd = fd;
 	mdfd->mdfd_vfd_pca = fd_pca;
-	mdfd->mdfd_vfd_pca = fd_pcd;
+	mdfd->mdfd_vfd_pcd = fd_pcd;
 	mdfd->mdfd_segno = 0;
 }
 
@@ -556,6 +557,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	PageCompressHeader	*pcMap;
 	PageCompressAddr 	*pcAddr;
 	uint8 				algorithm;
+	int8 				level;
 
 	/* This assert is too expensive to have on normally ... */
 #ifdef CHECK_WRITE_VS_EXTEND
@@ -580,6 +582,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
 	algorithm = PAGE_COMPRESS_ALGORITHM(reln);
+	level = PAGE_COMPRESS_LEVEL(reln);
 	prealloc_chunks = PAGE_COMPRESS_PREALLOC_CHUNKS(reln);
 	if(prealloc_chunks > BLCKSZ / chunk_size -1)
 		prealloc_chunks = BLCKSZ / chunk_size -1;
@@ -598,7 +601,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	}
 	if(i < BLCKSZ)
 	{
-		work_buffer = compress_page(buffer, chunk_size, algorithm, &nchunks);
+		work_buffer = compress_page(buffer, chunk_size, algorithm, level, &nchunks);
 
 		/* store original page if compress failed */
 		if(work_buffer == NULL)
@@ -1344,6 +1347,7 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	PageCompressHeader	*pcMap;
 	PageCompressAddr 	*pcAddr;
 	uint8 				algorithm;
+	int8				level;
 
 	/* This assert is too expensive to have on normally ... */
 #ifdef CHECK_WRITE_VS_EXTEND
@@ -1357,11 +1361,12 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
 	algorithm = PAGE_COMPRESS_ALGORITHM(reln);
+	level = PAGE_COMPRESS_LEVEL(reln);
 
 	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
-	work_buffer = compress_page(buffer, chunk_size, algorithm, &nchunks);
+	work_buffer = compress_page(buffer, chunk_size, algorithm, level, &nchunks);
 
 	/* store original page if compress failed */
 	if(work_buffer == NULL)

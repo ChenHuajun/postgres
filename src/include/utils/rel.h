@@ -306,6 +306,7 @@ typedef enum compressTypeOption
 typedef struct PageCompressOpts
 {
 	compressTypeOption	compress_type; 				/* compress algorithm */
+	int					compress_level;		/* compress level */
 	int					compress_chunk_size;		/* chunk size of compressed data */
 	int					compress_prealloc_chunks;	/* prealloced chunks to store compressed data */
 } PageCompressOpts;

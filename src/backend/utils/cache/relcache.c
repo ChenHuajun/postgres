@@ -6432,6 +6432,7 @@ SetupPageCompressForRelation(Relation relation, PageCompressOpts *compress_optio
 	if(compress_options->compress_type == COMPRESS_TYPE_NONE)
 	{
 		relation->rd_node.compress_algorithm = COMPRESS_TYPE_NONE;
+		relation->rd_node.compress_level = 0;
 		relation->rd_node.compress_chunk_size = 0;
 		relation->rd_node.compress_prealloc_chunks = 0;
 	}
@@ -6443,6 +6444,7 @@ SetupPageCompressForRelation(Relation relation, PageCompressOpts *compress_optio
 #endif
 
 		relation->rd_node.compress_algorithm = compress_options->compress_type;
+		relation->rd_node.compress_level = compress_options->compress_level;
 
 		if(compress_options->compress_chunk_size != BLCKSZ / 2 &&
 			compress_options->compress_chunk_size != BLCKSZ / 4 &&

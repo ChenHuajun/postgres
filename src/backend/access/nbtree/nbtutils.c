@@ -2110,6 +2110,8 @@ btoptions(Datum reloptions, bool validate)
 		offsetof(BTOptions, deduplicate_items)},
 		{"compress_type", RELOPT_TYPE_ENUM,
 		offsetof(BTOptions, compress) + offsetof(PageCompressOpts, compress_type)},
+		{"compress_level", RELOPT_TYPE_INT,
+		offsetof(BTOptions, compress) + offsetof(PageCompressOpts, compress_level)},
 		{"compress_chunk_size", RELOPT_TYPE_INT,
 		offsetof(BTOptions, compress) + offsetof(PageCompressOpts, compress_chunk_size)},
 		{"compress_prealloc_chunks", RELOPT_TYPE_INT,

@@ -384,6 +384,15 @@ static relopt_int intRelOpts[] =
 	},
 	{
 		{
+			"compress_level",
+			"Level of page compression.",
+			RELOPT_KIND_HEAP|RELOPT_KIND_BTREE,
+			ShareUpdateExclusiveLock
+		},
+		0, -127, 127
+	},
+	{
+		{
 			"compress_chunk_size",
 			"Size of chunk to store compressed page.",
 			RELOPT_KIND_HEAP|RELOPT_KIND_BTREE,
@@ -400,7 +409,6 @@ static relopt_int intRelOpts[] =
 		},
 		0, 0, 7
 	},
-
 	/* list terminator */
 	{{NULL}}
 };
@@ -1901,6 +1909,8 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, vacuum_truncate)},
 		{"compress_type", RELOPT_TYPE_ENUM,
 		offsetof(StdRdOptions, compress) + offsetof(PageCompressOpts, compress_type)},
+		{"compress_level", RELOPT_TYPE_INT,
+		offsetof(StdRdOptions, compress) + offsetof(PageCompressOpts, compress_level)},
 		{"compress_chunk_size", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, compress) + offsetof(PageCompressOpts, compress_chunk_size)},
 		{"compress_prealloc_chunks", RELOPT_TYPE_INT,

@@ -19,6 +19,7 @@
 #include "access/heapam.h"
 #include "access/heapam_xlog.h"
 #include "access/multixact.h"
+#include "access/nbtree.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
 #include "access/sysattr.h"
@@ -12834,6 +12835,8 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 	Datum		repl_val[Natts_pg_class];
 	bool		repl_null[Natts_pg_class];
 	bool		repl_repl[Natts_pg_class];
+	bytea		*byteaOpts;
+	PageCompressOpts *newPcOpts = NULL;
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 
 	if (defList == NIL && operation != AT_ReplaceRelOptions)
@@ -12874,17 +12877,28 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 		case RELKIND_RELATION:
 		case RELKIND_TOASTVALUE:
 		case RELKIND_MATVIEW:
-			(void) heap_reloptions(rel->rd_rel->relkind, newOptions, true);
+			byteaOpts = heap_reloptions(rel->rd_rel->relkind, newOptions, true);
+			newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
 			break;
 		case RELKIND_PARTITIONED_TABLE:
-			(void) partitioned_table_reloptions(newOptions, true);
+			byteaOpts = partitioned_table_reloptions(newOptions, true);
+			newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
 			break;
 		case RELKIND_VIEW:
 			(void) view_reloptions(newOptions, true);
 			break;
 		case RELKIND_INDEX:
 		case RELKIND_PARTITIONED_INDEX:
-			(void) index_reloptions(rel->rd_indam->amoptions, newOptions, true);
+			byteaOpts = index_reloptions(rel->rd_indam->amoptions, newOptions, true);
+			switch(rel->rd_rel->relam)
+			{
+				case BTREE_AM_OID:
+					newPcOpts = &((BTOptions *)byteaOpts)->compress;
+					break;
+
+				default:
+					break;
+			}
 			break;
 		default:
 			ereport(ERROR,
@@ -12925,6 +12939,21 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 						 errmsg("WITH CHECK OPTION is supported only on automatically updatable views"),
 						 errhint("%s", _(view_updatable_error))));
 		}
+	}
+
+	/* check if changed page compression store format */
+	if(newPcOpts != NULL)
+	{
+		if(newPcOpts->compress_type != rel->rd_node.compress_algorithm)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("change compress_type OPTION is not support")));
+
+		if(rel->rd_node.compress_algorithm != COMPRESS_TYPE_NONE &&
+			newPcOpts->compress_chunk_size != rel->rd_node.compress_chunk_size)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("change compress_chunk_size OPTION is not support")));
 	}
 
 	/*

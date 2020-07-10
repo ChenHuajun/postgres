@@ -84,6 +84,7 @@
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/lock.h"
+#include "storage/page_compression.h"
 #include "storage/predicate.h"
 #include "storage/smgr.h"
 #include "tcop/utility.h"
@@ -97,6 +98,7 @@
 #include "utils/relcache.h"
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
+#include "utils/spccache.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
@@ -602,6 +604,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	LOCKMODE	parentLockmode;
 	const char *accessMethod = NULL;
 	Oid			accessMethodId = InvalidOid;
+	Datum		defaultReloptions = (Datum) 0;
 
 	/*
 	 * Truncate relname to appropriate length (probably a waste of time, as
@@ -742,9 +745,24 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		ownerId = GetUserId();
 
 	/*
+	 * Get default compression options from tablespace.
+	 */
+	if(relkind == RELKIND_RELATION && stmt->relation->relpersistence == RELPERSISTENCE_PERMANENT)
+	{
+		if(stmt->accessMethod == NULL || strcmp(stmt->accessMethod, "heap") == 0)
+		{
+			PageCompressOpts * pcOpt = 
+				get_tablespace_compression_option(tablespaceId ? tablespaceId : MyDatabaseTableSpace);
+
+			if(pcOpt)
+				defaultReloptions = buildCompressReloptions(pcOpt);
+		}
+	}
+
+	/*
 	 * Parse and validate reloptions, if any.
 	 */
-	reloptions = transformRelOptions((Datum) 0, stmt->options, NULL, validnsps,
+	reloptions = transformRelOptions(defaultReloptions, stmt->options, NULL, validnsps,
 									 true, false);
 
 	switch (relkind)

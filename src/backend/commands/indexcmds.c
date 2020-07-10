@@ -63,7 +63,9 @@
 #include "utils/partcache.h"
 #include "utils/pg_rusage.h"
 #include "utils/regproc.h"
+#include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "utils/spccache.h"
 #include "utils/syscache.h"
 
 
@@ -521,6 +523,7 @@ DefineIndex(Oid relationId,
 	Snapshot	snapshot;
 	int			save_nestlevel = -1;
 	int			i;
+	Datum		defaultReloptions = (Datum) 0;
 
 	/*
 	 * Some callers need us to run with an empty default_tablespace; this is a
@@ -831,9 +834,25 @@ DefineIndex(Oid relationId,
 		CheckPredicate((Expr *) stmt->whereClause);
 
 	/*
+	 * Get default compression options from tablespace.
+	 */
+	if(stmt->relation->relpersistence == RELPERSISTENCE_PERMANENT)
+	{
+		if(accessMethodId == BTREE_AM_OID ||
+		   accessMethodId == GIN_AM_OID)
+		{
+			PageCompressOpts * pcOpt = 
+				get_tablespace_compression_option(tablespaceId ? tablespaceId : MyDatabaseTableSpace);
+
+			if(pcOpt)
+				defaultReloptions = buildCompressReloptions(pcOpt);
+		}
+	}
+
+	/*
 	 * Parse AM-specific options, convert to text array form, validate.
 	 */
-	reloptions = transformRelOptions((Datum) 0, stmt->options,
+	reloptions = transformRelOptions(defaultReloptions, stmt->options,
 									 NULL, NULL, false, false);
 
 	(void) index_reloptions(amoptions, reloptions, true);

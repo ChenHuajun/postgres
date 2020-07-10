@@ -83,4 +83,7 @@ extern PageCompressHeader * pc_mmap(int fd, int chunk_size);
 extern int pc_munmap(PageCompressHeader * map);
 extern int pc_msync(PageCompressHeader * map);
 
+/* compression options function */
+extern Datum buildCompressReloptions(PageCompressOpts *pcOpt);
+
 #endif							/* PAGE_COMPRESSION_H */

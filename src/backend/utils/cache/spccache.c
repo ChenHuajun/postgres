@@ -235,3 +235,18 @@ get_tablespace_maintenance_io_concurrency(Oid spcid)
 	else
 		return spc->opts->maintenance_io_concurrency;
 }
+
+/*
+ * get_tablespace_compression_option
+ *
+ */
+PageCompressOpts *
+get_tablespace_compression_option(Oid spcid)
+{
+	TableSpaceCacheEntry *spc = get_tablespace(spcid);
+
+	if (!spc->opts)
+		return NULL;
+	else
+		return &spc->opts->compress;
+}

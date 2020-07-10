@@ -409,6 +409,33 @@ static relopt_int intRelOpts[] =
 		},
 		0, 0, 7
 	},
+	{
+		{
+			"default_compress_level",
+			"Default level of page compression.",
+			RELOPT_KIND_TABLESPACE,
+			ShareUpdateExclusiveLock
+		},
+		0, -127, 127
+	},
+	{
+		{
+			"default_compress_chunk_size",
+			"Default size of chunk to store compressed page.",
+			RELOPT_KIND_TABLESPACE,
+			ShareUpdateExclusiveLock
+		},
+		BLCKSZ / 2, BLCKSZ / 8, BLCKSZ / 2
+	},
+	{
+		{
+			"default_compress_prealloc_chunks",
+			"Default number of prealloced chunks for each block.",
+			RELOPT_KIND_TABLESPACE,
+			ShareUpdateExclusiveLock
+		},
+		0, 0, 7
+	},
 	/* list terminator */
 	{{NULL}}
 };
@@ -555,9 +582,20 @@ static relopt_enum enumRelOpts[] =
 	{
 		{
 			"compress_type",
-			"compress type (none, pglz or zstd).",
+			"Compression type (none, pglz or zstd).",
 			RELOPT_KIND_HEAP|RELOPT_KIND_BTREE,
 			AccessExclusiveLock
+		},
+		compressTypeOptValues,
+		COMPRESS_TYPE_NONE,
+		gettext_noop("Valid values are \"none\", \"pglz\"  and \"zstd\".")
+	},
+	{
+		{
+			"default_compress_type",
+			"Default compression type (none, pglz or zstd).",
+			RELOPT_KIND_TABLESPACE,
+			ShareUpdateExclusiveLock
 		},
 		compressTypeOptValues,
 		COMPRESS_TYPE_NONE,
@@ -2121,7 +2159,11 @@ tablespace_reloptions(Datum reloptions, bool validate)
 		{"random_page_cost", RELOPT_TYPE_REAL, offsetof(TableSpaceOpts, random_page_cost)},
 		{"seq_page_cost", RELOPT_TYPE_REAL, offsetof(TableSpaceOpts, seq_page_cost)},
 		{"effective_io_concurrency", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, effective_io_concurrency)},
-		{"maintenance_io_concurrency", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, maintenance_io_concurrency)}
+		{"maintenance_io_concurrency", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, maintenance_io_concurrency)},
+		{"default_compress_type", RELOPT_TYPE_ENUM, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compress_type)},
+		{"default_compress_level", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compress_level)},
+		{"default_compress_chunk_size", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compress_chunk_size)},
+		{"default_compress_prealloc_chunks", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compress_prealloc_chunks)}
 	};
 
 	return (bytea *) build_reloptions(reloptions, validate,

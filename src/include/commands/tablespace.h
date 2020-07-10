@@ -18,6 +18,8 @@
 #include "catalog/objectaddress.h"
 #include "lib/stringinfo.h"
 #include "nodes/parsenodes.h"
+#include "storage/page_compression.h"
+
 
 /* XLOG stuff */
 #define XLOG_TBLSPC_CREATE		0x00
@@ -41,6 +43,7 @@ typedef struct TableSpaceOpts
 	float8		seq_page_cost;
 	int			effective_io_concurrency;
 	int			maintenance_io_concurrency;
+	PageCompressOpts	compress; /* page compress related options */
 } TableSpaceOpts;
 
 extern Oid	CreateTableSpace(CreateTableSpaceStmt *stmt);

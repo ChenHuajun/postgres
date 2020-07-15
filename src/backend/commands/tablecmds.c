@@ -12896,11 +12896,13 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 		case RELKIND_TOASTVALUE:
 		case RELKIND_MATVIEW:
 			byteaOpts = heap_reloptions(rel->rd_rel->relkind, newOptions, true);
-			newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
+			if(byteaOpts)
+				newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
 			break;
 		case RELKIND_PARTITIONED_TABLE:
 			byteaOpts = partitioned_table_reloptions(newOptions, true);
-			newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
+			if(byteaOpts)
+				newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
 			break;
 		case RELKIND_VIEW:
 			(void) view_reloptions(newOptions, true);
@@ -12908,14 +12910,17 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 		case RELKIND_INDEX:
 		case RELKIND_PARTITIONED_INDEX:
 			byteaOpts = index_reloptions(rel->rd_indam->amoptions, newOptions, true);
-			switch(rel->rd_rel->relam)
+			if(byteaOpts)
 			{
-				case BTREE_AM_OID:
-					newPcOpts = &((BTOptions *)byteaOpts)->compress;
-					break;
+				switch(rel->rd_rel->relam)
+				{
+					case BTREE_AM_OID:
+						newPcOpts = &((BTOptions *)byteaOpts)->compress;
+						break;
 
-				default:
-					break;
+					default:
+						break;
+				}
 			}
 			break;
 		default:
@@ -12972,6 +12977,11 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("change compress_chunk_size OPTION is not support")));
+	}else{
+		if(rel->rd_node.compress_algorithm != COMPRESS_TYPE_NONE)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("change compress_type OPTION is not support")));
 	}
 
 	/*

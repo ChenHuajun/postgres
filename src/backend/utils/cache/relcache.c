@@ -74,6 +74,7 @@
 #include "rewrite/rewriteDefine.h"
 #include "rewrite/rowsecurity.h"
 #include "storage/lmgr.h"
+#include "storage/page_compression.h"
 #include "storage/smgr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -6438,6 +6439,9 @@ SetupPageCompressForRelation(Relation relation, PageCompressOpts *compress_optio
 	}
 	else
 	{
+		if(!SUPPORT_PAGE_COMPRESSION)
+			elog(ERROR, "unsupported page compression on this platform");
+
 #ifndef USE_ZSTD
 		if(compress_options->compress_type == COMPRESS_TYPE_ZSTD)
 			elog(ERROR, "unsupported compression algorithm %s","zstd");

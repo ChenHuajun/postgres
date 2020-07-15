@@ -11,9 +11,29 @@
 #ifndef PAGE_COMPRESSION_H
 #define PAGE_COMPRESSION_H
 
+#include <sys/mman.h>
+
 #include "storage/bufpage.h"
+//#include "utils/rel.h"
+
+typedef struct pg_atomic_uint32_native_impl
+{
+	volatile uint32 value;
+} pg_atomic_uint32_native_impl;
+
+#ifdef FRONTEND
+typedef pg_atomic_uint32_native_impl pg_atomic_uint32;
+#else
 #include "port/atomics.h"
 #include "utils/rel.h"
+
+/* The page compression feature relies on native atomic operation support.
+ * On platforms that do not support native atomic operations, the members
+ * of pg_atomic_uint32 contain semaphore objects, which will affect the 
+ * persistence of compressed page address files.
+ */
+#define SUPPORT_PAGE_COMPRESSION (sizeof(pg_atomic_uint32) == sizeof(pg_atomic_uint32_native_impl))
+#endif
 
 typedef uint32 pc_chunk_number_t;
 
@@ -79,11 +99,14 @@ extern char *compress_page(const char *src, int chunck_size, uint8 algorithm, in
 extern int decompress_page(const char * src, char *dst, uint8 algorithm);
 
 /* Memory mapping function */
-extern PageCompressHeader * pc_mmap(int fd, int chunk_size);
+extern PageCompressHeader * pc_mmap(int fd, int chunk_size, bool readonly);
 extern int pc_munmap(PageCompressHeader * map);
 extern int pc_msync(PageCompressHeader * map);
 
+
+#ifndef FRONTEND
 /* compression options function */
 extern Datum buildCompressReloptions(PageCompressOpts *pcOpt);
+#endif
 
 #endif							/* PAGE_COMPRESSION_H */

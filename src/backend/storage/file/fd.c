@@ -2236,7 +2236,7 @@ SetupPageCompressMemoryMap(File file, int chunk_size, uint8 algorithm)
 				 errmsg("Failed to open file %s: %m",
 						 vfdP->fileName)));
 
-	map = pc_mmap(vfdP->fd, chunk_size);
+	map = pc_mmap(vfdP->fd, chunk_size, false);
 	if(map == MAP_FAILED)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
@@ -2286,7 +2286,7 @@ GetPageCompressMemoryMap(File file, int chunk_size)
 
 	if(vfdP->pcmap == NULL)
 	{
-		map = pc_mmap(vfdP->fd, chunk_size);
+		map = pc_mmap(vfdP->fd, chunk_size, false);
 		if(map == MAP_FAILED)
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_RESOURCES),

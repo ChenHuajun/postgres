@@ -1519,6 +1519,7 @@ is_checksummed_file(const char *fullpath, const char *filename)
 		strncmp(fullpath, "/", 1) == 0)
 	{
 		int			excludeIdx;
+		size_t		filenameLen;
 
 		/* Compare file against noChecksumFiles skip list */
 		for (excludeIdx = 0; noChecksumFiles[excludeIdx].name != NULL; excludeIdx++)
@@ -1529,6 +1530,17 @@ is_checksummed_file(const char *fullpath, const char *filename)
 				cmplen++;
 			if (strncmp(filename, noChecksumFiles[excludeIdx].name,
 						cmplen) == 0)
+				return false;
+		}
+
+		/* Skip compressed page files. Compressed pages may be stored in
+		 * multiple non-continuous chunks, and cannot perform checksum
+		 * while transferring blocks like ordinary data files. */
+		filenameLen = strlen(filename);
+		if(filenameLen >= 4)
+		{
+			if(strncmp(filename + filenameLen - 4, "_pca", 4) == 0 ||
+				strncmp(filename + filenameLen - 4, "_pcd", 4) == 0)
 				return false;
 		}
 

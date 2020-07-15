@@ -297,9 +297,9 @@ typedef struct AutoVacOpts
 /* PageCompressOpts->compress_type values */
 typedef enum compressTypeOption
 {
-	COMPRESS_TYPE_NONE,
-	COMPRESS_TYPE_PGLZ,
-	COMPRESS_TYPE_ZSTD
+	COMPRESS_TYPE_NONE = 0,
+	COMPRESS_TYPE_PGLZ = 1,
+	COMPRESS_TYPE_ZSTD = 2
 } compressTypeOption;
 
  /* page compress related reloptions. */

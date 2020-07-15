@@ -640,6 +640,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	}
 	pcAddr->nchunks = nchunks;
 
+	/* TODO automatic swap */
 	if(pg_atomic_read_u32(&pcMap->nblocks) < blocknum % RELSEG_SIZE + 1)
 		pg_atomic_write_u32(&pcMap->nblocks, blocknum % RELSEG_SIZE + 1);
 
@@ -1236,6 +1237,13 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		nbytes = decompress_page(compress_buffer, buffer, PAGE_COMPRESS_ALGORITHM(reln) );
 		if (nbytes != BLCKSZ)
 		{
+			if(nbytes = -2)
+				ereport(ERROR,
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						errmsg("could not recognized compression algorithm %d for file \"%s\"",
+								PAGE_COMPRESS_ALGORITHM(reln),
+								FilePathName(v->mdfd_vfd_pcd))));
+
 			/*
 			* Short read: we are at or past EOF, or we read a partial block at
 			* EOF.  Normally this is an error; upper levels should never try to

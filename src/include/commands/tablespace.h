@@ -19,7 +19,7 @@
 #include "lib/stringinfo.h"
 #include "nodes/parsenodes.h"
 #include "storage/page_compression.h"
-
+#include "utils/rel.h"
 
 /* XLOG stuff */
 #define XLOG_TBLSPC_CREATE		0x00

@@ -101,6 +101,7 @@
  */
 
 #include "storage/bufpage.h"
+#include "storage/page_compression.h“
 
 /* number of checksums to calculate in parallel */
 #define N_SUMS 32
@@ -111,6 +112,7 @@
 typedef union
 {
 	PageHeaderData phdr;
+	PageCompressData cphdr;
 	uint32		data[BLCKSZ / (sizeof(uint32) * N_SUMS)][N_SUMS];
 } PGChecksummablePage;
 
@@ -143,7 +145,7 @@ do { \
  * (at least on 4-byte boundary).
  */
 static uint32
-pg_checksum_block(const PGChecksummablePage *page)
+pg_checksum_block(const PGChecksummablePage *page, size_t size)
 {
 	uint32		sums[N_SUMS];
 	uint32		result = 0;
@@ -157,7 +159,7 @@ pg_checksum_block(const PGChecksummablePage *page)
 	memcpy(sums, checksumBaseOffsets, sizeof(checksumBaseOffsets));
 
 	/* main checksum calculation */
-	for (i = 0; i < (uint32) (BLCKSZ / (sizeof(uint32) * N_SUMS)); i++)
+	for (i = 0; i < (uint32) (size / (sizeof(uint32) * N_SUMS)); i++)
 		for (j = 0; j < N_SUMS; j++)
 			CHECKSUM_COMP(sums[j], page->data[i][j]);
 
@@ -201,8 +203,54 @@ pg_checksum_page(char *page, BlockNumber blkno)
 	 */
 	save_checksum = cpage->phdr.pd_checksum;
 	cpage->phdr.pd_checksum = 0;
-	checksum = pg_checksum_block(cpage);
+	checksum = pg_checksum_block(cpage, BLCKSZ);
 	cpage->phdr.pd_checksum = save_checksum;
+
+	/* Mix in the block number to detect transposed pages */
+	checksum ^= blkno;
+
+	/*
+	 * Reduce to a uint16 (to fit in the pd_checksum field) with an offset of
+	 * one. That avoids checksums of zero, which seems like a good idea.
+	 */
+	return (uint16) ((checksum % 65535) + 1);
+}
+
+
+/*
+ * Compute the checksum for a compressed Postgres page.
+ *
+ * The page must be adequately aligned (at least on a 4-byte boundary).
+ * Beware also that the checksum field of the page is transiently zeroed.
+ *
+ * The checksum includes the block number (to detect the case where a page is
+ * somehow moved to a different location), the page header (excluding the
+ * checksum itself), and the page data.
+ */
+uint16
+pg_checksum_compressed_page(char *page, BlockNumber blkno, size_t size)
+{
+	PGChecksummablePage *cpage = (PGChecksummablePage *) page;
+	uint16		save_checksum;
+	uint32		checksum;
+
+	/* redirect call for uncompressed page */
+	if(size == BLCKSZ)
+		return pg_checksum_page(page, blkno);
+
+	/* We only calculate the checksum for properly-initialized pages */
+	Assert(!PageIsNew(&cpage->phdr));
+
+	/*
+	 * Save checksum and temporarily set it to zero, so that the checksum
+	 * calculation isn't affected by the old checksum stored on the page.
+	 * Restore it after, because actually updating the checksum is NOT part of
+	 * the API of this function.
+	 */
+	save_checksum = cpage->cphdr.checksum;
+	cpage->cphdr.checksum = 0;
+	checksum = pg_checksum_block(cpage, size);
+	cpage->cphdr.checksum = save_checksum;
 
 	/* Mix in the block number to detect transposed pages */
 	checksum ^= blkno;

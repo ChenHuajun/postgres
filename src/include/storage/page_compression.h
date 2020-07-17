@@ -95,7 +95,8 @@ typedef struct PageCompressData
 
 
 /* Compress function */
-extern char *compress_page(const char *src, int chunck_size, uint8 algorithm, int8 level, int *nchuncks);
+extern int compress_page_buffer_bound(uint8 algorithm);
+extern int compress_page(const char *src, char *dst, int dst_size, uint8 algorithm, int8 level);
 extern int decompress_page(const char * src, char *dst, uint8 algorithm);
 
 /* Memory mapping function */

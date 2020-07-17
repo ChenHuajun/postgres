@@ -22,92 +22,90 @@
 
 
 /**
+ * compress_page_buffer_bound()
+ * -- Get the destination buffer boundary to compress one page.
+ * 
+ * Return needed destination buffer size for compress one page or
+ *     -1 for unrecognized compression algorithm
+ * 
+ */
+int
+compress_page_buffer_bound(uint8 algorithm)
+{
+	switch(algorithm)
+	{
+		case COMPRESS_ALGORITHM_PGLZ:
+			return BLCKSZ + 4;
+#ifdef USE_ZSTD
+		case COMPRESS_ALGORITHM_ZSTD:
+            return ZSTD_compressBound(BLCKSZ - SizeOfPageHeaderData);
+#endif
+		default:
+			return -1;
+			break;
+	}
+}
+
+/**
  * compress_page() -- Compress one page.
  * 
  *		Only the parts other than the page header will be compressed. The
- *		compressed data is rounded by chunck_size, and the compressed
- *		data and number of chuncks are returned. Compression needs to be
- *		able to save at least 1 chunk of space, otherwise it returns NULL.
+ *		compressed data is rounded by chunck_size, The insufficient part is
+ *		filled with zero.  Compression needs to be able to save at least one
+ *		chunk of space, otherwise it fail.
+ *		This function returen the size of compressed data or
+ *		    -1 for compression fail
+ *		    -2 for unrecognized compression algorithm
  */
-char *
-compress_page(const char *src, int chunck_size, uint8 algorithm, int8 level, int *nchuncks)
+int
+compress_page(const char *src, char *dst, int dst_size, uint8 algorithm, int8 level)
 {
-#ifdef FRONTEND
-    return NULL;
-#else
-	int 		compressed_size,targetDstSize;
-	PageCompressData *pcdptr;
-	char 		*dst;
+	int                 compressed_size;
+	PageCompressData    *pcdptr;
 
-	*nchuncks = 0;
-
-	targetDstSize = BLCKSZ - chunck_size;
-
-	if(targetDstSize < chunck_size)
-		return NULL;
+    pcdptr = (PageCompressData *)dst;
 
 	switch(algorithm)
 	{
 		case COMPRESS_ALGORITHM_PGLZ:
-			dst = palloc(BLCKSZ + 4);
-			pcdptr = (PageCompressData *)dst;
-
 			compressed_size = pglz_compress(src + SizeOfPageHeaderData,
 											BLCKSZ - SizeOfPageHeaderData,
 											pcdptr->data,
 											PGLZ_strategy_always);
 			break;
-		
 #ifdef USE_ZSTD
 		case COMPRESS_ALGORITHM_ZSTD:
 		{
-			size_t out_len = ZSTD_compressBound(BLCKSZ - SizeOfPageHeaderData);
-			dst = palloc(out_len);
-			pcdptr = (PageCompressData *)dst;
-
-			if(level == 0 || level < ZSTD_minCLevel() || level > ZSTD_maxCLevel() )
+			if(level == 0 ||
+               level < MIN_ZSTD_COMPRESSION_LEVEL ||
+               level > MAX_ZSTD_COMPRESSION_LEVEL)
 				level = DEFAULT_ZSTD_COMPRESSION_LEVEL;
 
 			compressed_size = ZSTD_compress(pcdptr->data,
-							out_len,
+							dst_size,
 							src + SizeOfPageHeaderData,
 							BLCKSZ - SizeOfPageHeaderData,
 							level);
 
 			if (ZSTD_isError(compressed_size))
 			{
-				pfree(dst);
-				return NULL;
+				return -1;
 			}
 			break;
 		}
 #endif
 		default:
-			elog(ERROR, "unrecognized compression algorithm %d",algorithm);
+			return -2;
 			break;
 	}
 
-	if(compressed_size < 0 ||
-		SizeOfPageCompressDataHeaderData + compressed_size > targetDstSize)
-		{
-			pfree(dst);
-			return NULL;
-		}
+	if(compressed_size < 0)
+		return -1;
 
 	memcpy(pcdptr->page_header, src, SizeOfPageHeaderData);
 	pcdptr->size = compressed_size;
 
-	*nchuncks = (SizeOfPageCompressDataHeaderData + compressed_size + chunck_size -1 ) / chunck_size;
-
-	if((SizeOfPageCompressDataHeaderData + compressed_size) < chunck_size * (*nchuncks))
-	{
-		memset(pcdptr->data + compressed_size,
-				0x00,
-				chunck_size * (*nchuncks) - SizeOfPageCompressDataHeaderData - compressed_size);
-	}
-
-	return dst;
-#endif
+	return SizeOfPageCompressDataHeaderData * compressed_size;
 }
 
 /**
@@ -154,9 +152,6 @@ decompress_page(const char * src, char *dst, uint8 algorithm)
 #endif
 
 		default:
-#ifndef FRONTEND
-			elog(ERROR, "unrecognized compression algorithm %d",algorithm);
-#endif
             return -2;
 			break;
 
@@ -234,15 +229,14 @@ pc_munmap(PageCompressHeader * map)
 int
 pc_msync(PageCompressHeader *map)
 {
-#ifdef FRONTEND
-    return -1;
-#else
+#ifndef FRONTEND
 	if (!enableFsync)
 		return 0;
+#endif
+
 #ifdef WIN32
 	return FlushViewOfFile(map, SizeofPageCompressAddrFile(map->chunk_size)) ? 0 : -1;
 #else
 	return msync(map, SizeofPageCompressAddrFile(map->chunk_size), MS_SYNC);
-#endif
 #endif
 }

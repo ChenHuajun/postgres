@@ -550,7 +550,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	off_t		seekpos;
 	int			nbytes;
 	MdfdVec    *v;
-	char		*work_buffer,*buffer_pos,*zero_buffer;
+	char		*work_buffer,*buffer_pos;
 	int			i;
 	int			prealloc_chunks,need_chunks,chunk_size,nchunks,range,write_amount;
 	pc_chunk_number_t chunkno;
@@ -590,27 +590,6 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
-	work_buffer = NULL;
-	nchunks = 0;
-
-	/* compress data if not full zero page */
-	for(i=0;i<BLCKSZ;i++)
-	{
-		if(buffer[i] != '\0')
-			break;
-	}
-	if(i < BLCKSZ)
-	{
-		work_buffer = compress_page(buffer, chunk_size, algorithm, level, &nchunks);
-
-		/* store original page if compress failed */
-		if(work_buffer == NULL)
-		{
-			work_buffer = buffer;
-			nchunks = BLCKSZ / chunk_size;
-		}
-	}
-	
 	/* check allocated chunk number */
 	if(pcAddr->allocated_chunks > BLCKSZ / chunk_size)
 		ereport(ERROR,
@@ -627,8 +606,50 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 							pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pca))));
 	}
 
+	nchunks = 0;
+	work_buffer = NULL;
+
+	/* compress page only for initialized page */
+	if(!PageIsNew(buffer))
+	{
+		int work_buffer_size, compressed_page_size;
+
+		work_buffer_size = compress_page_buffer_bound(algorithm);
+		if(work_buffer_size < 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("unrecognized compression algorithm %d",
+							algorithm)));
+		work_buffer = palloc(work_buffer_size);
+
+		compressed_page_size = compress_page(buffer, work_buffer, algorithm, level, chunk_size);
+
+		if(compressed_page_size < 0)
+		{
+			if(compressed_page_size == -2)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("unrecognized compression algorithm %d",
+								algorithm)));
+
+			/* store original page if compress failed */
+			pfree(work_buffer);
+			work_buffer = buffer;
+			nchunks = BLCKSZ / chunk_size;
+		}
+		else
+		{
+			nchunks = compressed_page_size / chunk_size;
+
+			/* fill zero in the last chunk */
+			if(compressed_page_size != chunk_size * nchunks)
+				memset(work_buffer, 0x00, chunk_size * nchunks - compressed_page_size);
+		}
+	}
+
 	need_chunks = prealloc_chunks > nchunks ? prealloc_chunks : nchunks;
-	/* TODO automatic read ? */
+	/* allocate chunks needed
+	TODO automatic read ? */
 	if(pcAddr->allocated_chunks < need_chunks)
 	{
 		chunkno = (pc_chunk_number_t)pg_atomic_fetch_add_u32(&pcMap->allocated_chunks, need_chunks - pcAddr->allocated_chunks) + 1;
@@ -644,6 +665,7 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	if(pg_atomic_read_u32(&pcMap->nblocks) < blocknum % RELSEG_SIZE + 1)
 		pg_atomic_write_u32(&pcMap->nblocks, blocknum % RELSEG_SIZE + 1);
 
+	/* write chunks of compressed page */
 	for(i=0; i < nchunks;i++)
 	{
 		buffer_pos = work_buffer + chunk_size * i;
@@ -674,9 +696,10 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		}
 	}
 
+	/* write preallocated chunks */
 	if(need_chunks > nchunks)
 	{
-		zero_buffer = palloc0(chunk_size * (need_chunks - nchunks));
+		char *zero_buffer = palloc0(chunk_size * (need_chunks - nchunks));
 
 		for(i=nchunks; i < need_chunks;i++)
 		{
@@ -1133,8 +1156,14 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
+	if(pcAddr->nchunks == 0)
+	{
+		MemSet(buffer, 0, BLCKSZ);
+		return;
+	}
+
 	/* check chunk number */
-	if(pcAddr->nchunks <= 0 || pcAddr->nchunks > BLCKSZ / chunk_size)
+	if(pcAddr->nchunks < 0 || pcAddr->nchunks > BLCKSZ / chunk_size)
 	{
 		if (zero_damaged_pages || InRecovery)
 		{
@@ -1237,7 +1266,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		nbytes = decompress_page(compress_buffer, buffer, PAGE_COMPRESS_ALGORITHM(reln) );
 		if (nbytes != BLCKSZ)
 		{
-			if(nbytes = -2)
+			if(nbytes == -2)
 				ereport(ERROR,
 						(errcode(ERRCODE_DATA_CORRUPTED),
 						errmsg("could not recognized compression algorithm %d for file \"%s\"",
@@ -1349,8 +1378,8 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	int			nbytes;
 	MdfdVec    *v;
 	char		*work_buffer,*buffer_pos;
-	int			i;
-	int			chunk_size,nchunks,range,write_amount;
+	int			i,work_buffer_size, compressed_page_size;
+	int			prealloc_chunks,chunk_size,nchunks,need_chunks,range,write_amount;
 	pc_chunk_number_t chunkno;
 	PageCompressHeader	*pcMap;
 	PageCompressAddr 	*pcAddr;
@@ -1370,18 +1399,12 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
 	algorithm = PAGE_COMPRESS_ALGORITHM(reln);
 	level = PAGE_COMPRESS_LEVEL(reln);
+	prealloc_chunks = PAGE_COMPRESS_PREALLOC_CHUNKS(reln);
+	if(prealloc_chunks > BLCKSZ / chunk_size -1)
+		prealloc_chunks = BLCKSZ / chunk_size -1;
 
 	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
-
-	work_buffer = compress_page(buffer, chunk_size, algorithm, level, &nchunks);
-
-	/* store original page if compress failed */
-	if(work_buffer == NULL)
-	{
-		work_buffer = buffer;
-		nchunks = BLCKSZ / chunk_size;
-	}
 
 	/* check allocated chunk number */
 	if(pcAddr->allocated_chunks > BLCKSZ / chunk_size)
@@ -1399,18 +1422,55 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 							pcAddr->chunknos[i], blocknum, FilePathName(v->mdfd_vfd_pca))));
 	}
 
-	/* TODO automatic read ? */
-	if(pcAddr->allocated_chunks < nchunks)
+	/* compress page */
+	work_buffer_size = compress_page_buffer_bound(algorithm);
+	if(work_buffer_size < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("unrecognized compression algorithm %d",
+						algorithm)));
+	work_buffer = palloc(work_buffer_size);
+
+	compressed_page_size = compress_page(buffer, work_buffer, algorithm, level, chunk_size);
+
+	if(compressed_page_size < 0)
 	{
-		chunkno = (pc_chunk_number_t)pg_atomic_fetch_add_u32(&pcMap->allocated_chunks, nchunks - pcAddr->allocated_chunks) + 1;
-		for(i = pcAddr->allocated_chunks ;i<nchunks ;i++,chunkno++)
+		if(compressed_page_size == -2)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("unrecognized compression algorithm %d",
+							algorithm)));
+
+		/* store original page if compress failed */
+		pfree(work_buffer);
+		work_buffer = buffer;
+		nchunks = BLCKSZ / chunk_size;
+	}
+	else
+	{
+		nchunks = compressed_page_size / chunk_size;
+
+		/* fill zero in the last chunk */
+		if(compressed_page_size != chunk_size * nchunks)
+			memset(work_buffer, 0x00, chunk_size * nchunks - compressed_page_size);
+	}
+
+	need_chunks = prealloc_chunks > nchunks ? prealloc_chunks : nchunks;
+
+	/* allocate chunks needed
+	TODO automatic read ? */
+	if(pcAddr->allocated_chunks < need_chunks)
+	{
+		chunkno = (pc_chunk_number_t)pg_atomic_fetch_add_u32(&pcMap->allocated_chunks, need_chunks - pcAddr->allocated_chunks) + 1;
+		for(i = pcAddr->allocated_chunks ;i<need_chunks ;i++,chunkno++)
 		{
 			pcAddr->chunknos[i] = chunkno;
 		}
-		pcAddr->allocated_chunks = nchunks;
+		pcAddr->allocated_chunks = need_chunks;
 	}
 	pcAddr->nchunks = nchunks;
 
+	/* write chunks of compressed page */
 	for(i=0; i < nchunks;i++)
 	{
 		buffer_pos = work_buffer + chunk_size * i;
@@ -1439,6 +1499,42 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 							nbytes, write_amount),
 					errhint("Check free disk space.")));
 		}
+	}
+
+	/* write preallocated chunks */
+	if(need_chunks > nchunks)
+	{
+		char *zero_buffer = palloc0(chunk_size * (need_chunks - nchunks));
+
+		for(i=nchunks; i < need_chunks;i++)
+		{
+			seekpos = (off_t) OffsetOfPageCompressChunk(chunk_size, pcAddr->chunknos[i]);
+			range = 1;
+			while(i < nchunks -1 && pcAddr->chunknos[i+1] == pcAddr->chunknos[i] + 1)
+			{
+				range++;
+				i++;
+			}
+			write_amount = chunk_size * range;
+
+			if ((nbytes = FileWrite(v->mdfd_vfd_pcd, zero_buffer, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
+			{
+				if (nbytes < 0)
+					ereport(ERROR,
+							(errcode_for_file_access(),
+							errmsg("could not extend file \"%s\": %m",
+									FilePathName(v->mdfd_vfd_pcd)),
+							errhint("Check free disk space.")));
+				/* short write: complain appropriately */
+				ereport(ERROR,
+						(errcode(ERRCODE_DISK_FULL),
+						errmsg("could not extend file \"%s\": wrote only %d of %d bytes at block %u",
+								FilePathName(v->mdfd_vfd_pcd),
+								nbytes, write_amount, blocknum),
+						errhint("Check free disk space.")));
+			}
+		}
+		pfree(zero_buffer);
 	}
 
 	if(work_buffer != buffer)

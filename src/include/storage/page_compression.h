@@ -16,13 +16,8 @@
 #include "storage/bufpage.h"
 //#include "utils/rel.h"
 
-typedef struct pg_atomic_uint32_native_impl
-{
-	volatile uint32 value;
-} pg_atomic_uint32_native_impl;
-
 #ifdef FRONTEND
-typedef pg_atomic_uint32_native_impl pg_atomic_uint32;
+typedef uint32 pg_atomic_uint32;
 #else
 #include "port/atomics.h"
 #include "utils/rel.h"
@@ -32,7 +27,7 @@ typedef pg_atomic_uint32_native_impl pg_atomic_uint32;
  * of pg_atomic_uint32 contain semaphore objects, which will affect the 
  * persistence of compressed page address files.
  */
-#define SUPPORT_PAGE_COMPRESSION (sizeof(pg_atomic_uint32) == sizeof(pg_atomic_uint32_native_impl))
+#define SUPPORT_PAGE_COMPRESSION (sizeof(pg_atomic_uint32) == sizeof(uint32))
 #endif
 
 typedef uint32 pc_chunk_number_t;
@@ -93,6 +88,7 @@ typedef struct PageCompressData
 #define OffsetOfPageCompressChunk(chunk_size, chunkno) \
 	((chunk_size) * (chunkno - 1))
 
+#define MAX_PAGE_COMPRESS_ADDRESS_FILE_SIZE SizeofPageCompressAddrFile(BLCKSZ / 8)
 
 /* Compress function */
 extern int compress_page_buffer_bound(uint8 algorithm);

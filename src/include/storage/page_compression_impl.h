@@ -105,7 +105,7 @@ compress_page(const char *src, char *dst, int dst_size, uint8 algorithm, int8 le
 	memcpy(pcdptr->page_header, src, SizeOfPageHeaderData);
 	pcdptr->size = compressed_size;
 
-	return SizeOfPageCompressDataHeaderData * compressed_size;
+	return SizeOfPageCompressDataHeaderData + compressed_size;
 }
 
 /**

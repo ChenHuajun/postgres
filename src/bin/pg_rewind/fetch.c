@@ -33,6 +33,15 @@ fetchSourceFileList(void)
 		libpqProcessFileList();
 }
 
+void
+fetchCompressedRelationAddress()
+{
+	if (datadir_source)
+		local_fetchCompressedRelationAddress(filemap);
+	else
+		libpq_fetchCompressedRelationAddress(filemap);
+}
+
 /*
  * Fetch all relation data files that are marked in the given data page map.
  */

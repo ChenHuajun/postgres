@@ -22,4 +22,9 @@ extern void remove_target(file_entry_t *t);
 
 extern char *slurpFile(const char *datadir, const char *path, size_t *filesize);
 
+extern void open_target_compressed_relation(const char *path);
+extern void write_target_compressed_relation_chunk(char *buf, size_t size, int blocknum, int chunknum,
+                                                    int nchunks, int prealloc_chunks);
+extern void truncate_target_compressed_relation(const char *path, int newblocks);
+
 #endif							/* FILE_OPS_H */

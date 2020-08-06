@@ -32,6 +32,7 @@ extern int	targetNentries;
 
 /* general state */
 extern PGconn *conn;
+extern PGconn *pca_conn;
 
 /* Progress counters */
 extern uint64 fetch_size;

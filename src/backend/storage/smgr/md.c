@@ -622,28 +622,28 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 							algorithm)));
 		work_buffer = palloc(work_buffer_size);
 
-		compressed_page_size = compress_page(buffer, work_buffer, algorithm, level, chunk_size);
+		compressed_page_size = compress_page(buffer, work_buffer, work_buffer_size, algorithm, level);
 
 		if(compressed_page_size < 0)
-		{
-			if(compressed_page_size == -2)
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("unrecognized compression algorithm %d",
-								algorithm)));
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("unrecognized compression algorithm %d",
+							algorithm)));
 
-			/* store original page if compress failed */
+		nchunks = (compressed_page_size + chunk_size - 1) / chunk_size;
+
+		if(chunk_size * nchunks >= BLCKSZ)
+		{
+			/* store original page if can not save space ?TODO? */
 			pfree(work_buffer);
 			work_buffer = buffer;
 			nchunks = BLCKSZ / chunk_size;
 		}
 		else
 		{
-			nchunks = compressed_page_size / chunk_size;
-
 			/* fill zero in the last chunk */
-			if(compressed_page_size != chunk_size * nchunks)
-				memset(work_buffer, 0x00, chunk_size * nchunks - compressed_page_size);
+			if(compressed_page_size < chunk_size * nchunks)
+				memset(work_buffer + compressed_page_size, 0x00, chunk_size * nchunks - compressed_page_size);
 		}
 	}
 
@@ -1431,28 +1431,28 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 						algorithm)));
 	work_buffer = palloc(work_buffer_size);
 
-	compressed_page_size = compress_page(buffer, work_buffer, algorithm, level, chunk_size);
+	compressed_page_size = compress_page(buffer, work_buffer, work_buffer_size, algorithm, level);
 
 	if(compressed_page_size < 0)
-	{
-		if(compressed_page_size == -2)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("unrecognized compression algorithm %d",
-							algorithm)));
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("unrecognized compression algorithm %d",
+						algorithm)));
 
-		/* store original page if compress failed */
+	nchunks = (compressed_page_size + chunk_size - 1) / chunk_size;
+
+	if(chunk_size * nchunks >= BLCKSZ)
+	{
+		/* store original page if can not save space ?TODO? */
 		pfree(work_buffer);
 		work_buffer = buffer;
 		nchunks = BLCKSZ / chunk_size;
 	}
 	else
 	{
-		nchunks = compressed_page_size / chunk_size;
-
 		/* fill zero in the last chunk */
-		if(compressed_page_size != chunk_size * nchunks)
-			memset(work_buffer, 0x00, chunk_size * nchunks - compressed_page_size);
+		if(compressed_page_size < chunk_size * nchunks)
+			memset(work_buffer + compressed_page_size, 0x00, chunk_size * nchunks - compressed_page_size);
 	}
 
 	need_chunks = prealloc_chunks > nchunks ? prealloc_chunks : nchunks;

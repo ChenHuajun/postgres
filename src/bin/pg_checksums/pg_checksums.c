@@ -276,7 +276,7 @@ scan_file(const char *fn, BlockNumber segmentno, bool is_compressed_datafile)
 			PageCompressAddr	*pcAddr;
 			bool				is_compressed_block = true;
 
-			if(blockno >= pcMap->nblocks.value)
+			if(blockno >= pcMap->nblocks)
 				break;
 
 			pcAddr = GetPageCompressAddr(pcMap, pcMap->chunk_size, blockno);

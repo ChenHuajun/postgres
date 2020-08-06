@@ -380,6 +380,7 @@ main(int argc, char **argv)
 	if (showprogress)
 		pg_log_info("reading target file list");
 	traverse_datadir(datadir_target, &process_target_file);
+	process_compressed_relation();
 
 	/*
 	 * Read the target WAL from last checkpoint before the point of fork, to
@@ -392,6 +393,8 @@ main(int argc, char **argv)
 		pg_log_info("reading WAL in target");
 	extractPageMap(datadir_target, chkptrec, lastcommontliIndex,
 				   ControlFile_target.checkPoint, restore_command);
+
+	fetchCompressedRelationAddress();
 	filemap_finalize();
 
 	if (showprogress)

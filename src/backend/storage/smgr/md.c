@@ -590,6 +590,8 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
+	Assert(blocknum % RELSEG_SIZE >= pg_atomic_read_u32(&pcMap->nblocks));
+
 	/* check allocated chunk number */
 	if(pcAddr->allocated_chunks > BLCKSZ / chunk_size)
 		ereport(ERROR,
@@ -648,10 +650,11 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	}
 
 	need_chunks = prealloc_chunks > nchunks ? prealloc_chunks : nchunks;
-	/* allocate chunks needed
-	TODO automatic read ? */
 	if(pcAddr->allocated_chunks < need_chunks)
 	{
+		int new_allocated_chunks = need_chunks - pcAddr->allocated_chunks;
+//TODO		int pg_atomic_read_u32(&pcMap->allocated_chunks) - pg_atomic_read_u32(&pcMap->last_synced_allocated_chunks);
+
 		chunkno = (pc_chunk_number_t)pg_atomic_fetch_add_u32(&pcMap->allocated_chunks, need_chunks - pcAddr->allocated_chunks) + 1;
 		for(i = pcAddr->allocated_chunks ;i<need_chunks ;i++,chunkno++)
 		{
@@ -659,11 +662,6 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		}
 		pcAddr->allocated_chunks = need_chunks;
 	}
-	pcAddr->nchunks = nchunks;
-
-	/* TODO automatic swap */
-	if(pg_atomic_read_u32(&pcMap->nblocks) < blocknum % RELSEG_SIZE + 1)
-		pg_atomic_write_u32(&pcMap->nblocks, blocknum % RELSEG_SIZE + 1);
 
 	/* write chunks of compressed page */
 	for(i=0; i < nchunks;i++)
@@ -731,6 +729,13 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		}
 		pfree(zero_buffer);
 	}
+
+	/* finally update size of this page and global nblocks */
+	if(pcAddr->nchunks != nchunks)
+		pcAddr->nchunks = nchunks;
+
+	if(pg_atomic_read_u32(&pcMap->nblocks) < blocknum % RELSEG_SIZE + 1)
+		pg_atomic_write_u32(&pcMap->nblocks, blocknum % RELSEG_SIZE + 1);
 
 	if(work_buffer != NULL && work_buffer != buffer)
 		pfree(work_buffer);
@@ -1141,7 +1146,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	   char *buffer)
 {
 	off_t		seekpos;
-	int			nbytes,chunk_size,i,read_amount,range;
+	int			nbytes,chunk_size,i,read_amount,range,nchunks;
 	MdfdVec    *v;
 	PageCompressHeader	*pcMap;
 	PageCompressAddr	*pcAddr;
@@ -1156,14 +1161,15 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
-	if(pcAddr->nchunks == 0)
+	nchunks = pcAddr->nchunks;
+	if(nchunks == 0)
 	{
 		MemSet(buffer, 0, BLCKSZ);
 		return;
 	}
 
 	/* check chunk number */
-	if(pcAddr->nchunks < 0 || pcAddr->nchunks > BLCKSZ / chunk_size)
+	if(nchunks < 0 || nchunks > BLCKSZ / chunk_size)
 	{
 		if (zero_damaged_pages || InRecovery)
 		{
@@ -1174,10 +1180,10 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					errmsg("invalid chunks %u of block %u in file \"%s\"",
-							pcAddr->nchunks, blocknum, FilePathName(v->mdfd_vfd_pca))));
+							nchunks, blocknum, FilePathName(v->mdfd_vfd_pca))));
 	}
 
-	for(i=0; i< pcAddr->nchunks; i++)
+	for(i=0; i< nchunks; i++)
 	{
 		if(pcAddr->chunknos[i] <= 0 || pcAddr->chunknos[i] > (BLCKSZ / chunk_size) * RELSEG_SIZE)
 		{
@@ -1195,13 +1201,13 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	}
 
 	/* read chunk data */
-	compress_buffer = palloc(chunk_size * pcAddr->nchunks);
-	for(i=0; i< pcAddr->nchunks; i++)
+	compress_buffer = palloc(chunk_size * nchunks);
+	for(i=0; i< nchunks; i++)
 	{
 		buffer_pos = compress_buffer + chunk_size * i;
 		seekpos = (off_t) OffsetOfPageCompressChunk(chunk_size, pcAddr->chunknos[i]);
 		range = 1;
-		while(i<pcAddr->nchunks-1 && pcAddr->chunknos[i+1] == pcAddr->chunknos[i]+1)
+		while(i<nchunks-1 && pcAddr->chunknos[i+1] == pcAddr->chunknos[i]+1)
 		{
 			range++;
 			i++;
@@ -1253,7 +1259,6 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 								blocknum, FilePathName(v->mdfd_vfd_pcd),
 								nbytes, read_amount)));
 		}
-		
 	}
 
 	/* decompress chunk data */
@@ -1388,7 +1393,7 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	/* This assert is too expensive to have on normally ... */
 #ifdef CHECK_WRITE_VS_EXTEND
-	Assert(blocknum >= mdnblocks(reln, forknum));
+	Assert(blocknum < mdnblocks(reln, forknum));
 #endif
 
 	Assert(IS_COMPRESSED_MAINFORK(reln,forkNum));
@@ -1405,6 +1410,8 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 	pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
+
+	Assert(blocknum % RELSEG_SIZE < pg_atomic_read_u32(&pcMap->nblocks));
 
 	/* check allocated chunk number */
 	if(pcAddr->allocated_chunks > BLCKSZ / chunk_size)
@@ -1457,8 +1464,7 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	need_chunks = prealloc_chunks > nchunks ? prealloc_chunks : nchunks;
 
-	/* allocate chunks needed
-	TODO automatic read ? */
+	/* allocate chunks needed */
 	if(pcAddr->allocated_chunks < need_chunks)
 	{
 		chunkno = (pc_chunk_number_t)pg_atomic_fetch_add_u32(&pcMap->allocated_chunks, need_chunks - pcAddr->allocated_chunks) + 1;
@@ -1468,7 +1474,6 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		}
 		pcAddr->allocated_chunks = need_chunks;
 	}
-	pcAddr->nchunks = nchunks;
 
 	/* write chunks of compressed page */
 	for(i=0; i < nchunks;i++)
@@ -1483,7 +1488,23 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		}
 		write_amount = chunk_size * range;
 
-		if ((nbytes = FileWrite(v->mdfd_vfd_pcd, buffer_pos, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
+		TRACE_POSTGRESQL_SMGR_MD_WRITE_START(forknum, blocknum,
+											reln->smgr_rnode.node.spcNode,
+											reln->smgr_rnode.node.dbNode,
+											reln->smgr_rnode.node.relNode,
+											reln->smgr_rnode.backend);
+
+		nbytes = FileWrite(v->mdfd_vfd_pcd, buffer_pos, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND);
+
+		TRACE_POSTGRESQL_SMGR_MD_WRITE_DONE(forknum, blocknum,
+											reln->smgr_rnode.node.spcNode,
+											reln->smgr_rnode.node.dbNode,
+											reln->smgr_rnode.node.relNode,
+											reln->smgr_rnode.backend,
+											nbytes,
+											write_amount);
+
+		if (nbytes != write_amount)
 		{
 			if (nbytes < 0)
 				ereport(ERROR,
@@ -1517,7 +1538,23 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 			}
 			write_amount = chunk_size * range;
 
-			if ((nbytes = FileWrite(v->mdfd_vfd_pcd, zero_buffer, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND)) != write_amount)
+			TRACE_POSTGRESQL_SMGR_MD_WRITE_START(forknum, blocknum,
+												reln->smgr_rnode.node.spcNode,
+												reln->smgr_rnode.node.dbNode,
+												reln->smgr_rnode.node.relNode,
+												reln->smgr_rnode.backend);
+
+			nbytes = FileWrite(v->mdfd_vfd_pcd, zero_buffer, write_amount, seekpos, WAIT_EVENT_DATA_FILE_EXTEND);
+
+			TRACE_POSTGRESQL_SMGR_MD_WRITE_DONE(forknum, blocknum,
+												reln->smgr_rnode.node.spcNode,
+												reln->smgr_rnode.node.dbNode,
+												reln->smgr_rnode.node.relNode,
+												reln->smgr_rnode.backend,
+												nbytes,
+												write_amount);
+
+			if (nbytes != write_amount)
 			{
 				if (nbytes < 0)
 					ereport(ERROR,
@@ -1536,6 +1573,10 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		}
 		pfree(zero_buffer);
 	}
+
+	/* finally update size of this page and global nblocks */
+	if(pcAddr->nchunks != nchunks)
+		pcAddr->nchunks = nchunks;
 
 	if(work_buffer != buffer)
 		pfree(work_buffer);

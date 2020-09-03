@@ -309,7 +309,7 @@ calculate_relation_size(RelFileNode *rfn, BackendId backend, ForkNumber forknum)
 				else
 					ereport(ERROR,
 							(errcode_for_file_access(),
-							errmsg("could not stat file \"%s\": %m", pathname)));
+							errmsg("could not stat file \"%s\": %m", pcfile_segpath)));
 			}
 			totalsize += fst.st_size;
 			pfree(pcfile_segpath);
@@ -326,7 +326,7 @@ calculate_relation_size(RelFileNode *rfn, BackendId backend, ForkNumber forknum)
 				else
 					ereport(ERROR,
 							(errcode_for_file_access(),
-							errmsg("could not stat file \"%s\": %m", pathname)));
+							errmsg("could not stat file \"%s\": %m", pcfile_segpath)));
 			}
 			totalsize += fst.st_size;
 			pfree(pcfile_segpath);

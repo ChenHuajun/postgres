@@ -16,10 +16,6 @@
 #define MAX_ZSTD_COMPRESSION_LEVEL ZSTD_maxCLevel()
 #endif
 
-/* COMPRESS_ALGORITHM_XXX must be the same as COMPRESS_TYPE_XXX */
-#define COMPRESS_ALGORITHM_PGLZ 1
-#define COMPRESS_ALGORITHM_ZSTD 2
-
 
 /**
  * compress_page_buffer_bound()

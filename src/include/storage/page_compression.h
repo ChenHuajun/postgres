@@ -30,6 +30,10 @@ typedef uint32 pg_atomic_uint32;
 #define SUPPORT_PAGE_COMPRESSION (sizeof(pg_atomic_uint32) == sizeof(uint32))
 #endif
 
+/* COMPRESS_ALGORITHM_XXX must be the same as COMPRESS_TYPE_XXX */
+#define COMPRESS_ALGORITHM_PGLZ 1
+#define COMPRESS_ALGORITHM_ZSTD 2
+
 typedef uint32 pc_chunk_number_t;
 
 /*
@@ -50,12 +54,13 @@ typedef struct PageCompressHeader
 	pg_atomic_uint32	allocated_chunks;	/* number of total allocated chunks in data area */
 	uint16				chunk_size;	/* size of each chunk, must be 1/2 1/4 or 1/8 of BLCKSZ */
 	uint8				algorithm;	/* compress algorithm, 1=pglz, 2=lz4 */
+	pg_atomic_uint32	last_synced_allocated_chunks;	/* last synced allocated_chunks */
 } PageCompressHeader;
 
 typedef struct PageCompressAddr
 {
-	uint8				nchunks;			/* number of chunks for this block */
-	uint8				allocated_chunks;	/* number of allocated chunks for this block */
+	volatile uint8		nchunks;			/* number of chunks for this block */
+	volatile uint8		allocated_chunks;	/* number of allocated chunks for this block */
 
 	/* variable-length fields, 1 based chunk no array for this block, size of the array must be 2, 4 or 8 */
 	pc_chunk_number_t	chunknos[FLEXIBLE_ARRAY_MEMBER];

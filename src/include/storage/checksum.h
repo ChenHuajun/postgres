@@ -21,10 +21,4 @@
  */
 extern uint16 pg_checksum_page(char *page, BlockNumber blkno);
 
-/*
- * Compute the checksum for a compressed Postgres page.  The page must be aligned on a
- * 4-byte boundary.
- */
-extern pg_checksum_compressed_page(char *page, BlockNumber blkno, size_t size)
-
 #endif							/* CHECKSUM_H */

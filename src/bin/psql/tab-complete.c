@@ -2154,7 +2154,9 @@ psql_completion(const char *text, int start, int end)
 	/* ALTER TABLESPACE <foo> SET|RESET ( */
 	else if (Matches("ALTER", "TABLESPACE", MatchAny, "SET|RESET", "("))
 		COMPLETE_WITH("seq_page_cost", "random_page_cost",
-					  "effective_io_concurrency", "maintenance_io_concurrency");
+					  "effective_io_concurrency", "maintenance_io_concurrency",
+					  "default_compress_type", "default_compress_level",
+					  "default_compress_chunk_size", "default_compress_prealloc_chunks");
 
 	/* ALTER TEXT SEARCH */
 	else if (Matches("ALTER", "TEXT", "SEARCH"))

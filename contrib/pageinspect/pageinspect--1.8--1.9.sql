@@ -11,6 +11,7 @@ CREATE FUNCTION get_compress_address_header(IN relname text, IN segno integer,
        OUT allocated_chunks integer,
        OUT chunk_size integer,
        OUT algorithm integer,
+       OUT last_synced_nblocks integer,
        OUT last_synced_allocated_chunks integer)
 RETURNS record
 AS 'MODULE_PATHNAME', 'get_compress_address_header'
@@ -37,4 +38,3 @@ CREATE FUNCTION page_compress(
 RETURNS bytea
 AS 'MODULE_PATHNAME', 'page_compress'
 LANGUAGE C STRICT PARALLEL SAFE;
-

@@ -2244,7 +2244,7 @@ SetupPageCompressMemoryMap(File file, int chunk_size, uint8 algorithm)
 							vfdP->fileName)));
 
 	/* initialize page compress header */
-	if(map->chunk_size == 0)
+	if(map->chunk_size == 0 && map->algorithm == 0)
 	{
 		map->chunk_size = chunk_size;
 		map->algorithm = algorithm;
@@ -2254,6 +2254,11 @@ SetupPageCompressMemoryMap(File file, int chunk_size, uint8 algorithm)
 					(errcode_for_file_access(),
 						errmsg("could not msync file \"%s\": %m",
 							vfdP->fileName)));
+	}
+
+	if(InRecovery)
+	{
+		check_and_repair_compress_address(map, chunk_size, algorithm, vfdP->fileName);
 	}
 
 	vfdP->with_pcmap=true;

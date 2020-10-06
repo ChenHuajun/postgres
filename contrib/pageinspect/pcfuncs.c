@@ -69,7 +69,8 @@ get_compress_address_header(PG_FUNCTION_ARGS)
 	values[1] = UInt32GetDatum(pg_atomic_read_u32(&pcMap->allocated_chunks));
 	values[2] = UInt32GetDatum(pcMap->chunk_size);
 	values[3] = UInt32GetDatum(pcMap->algorithm);
-	values[4] = UInt32GetDatum(pg_atomic_read_u32(&pcMap->last_synced_allocated_chunks));
+	values[4] = UInt32GetDatum(pg_atomic_read_u32(&pcMap->last_synced_nblocks));
+	values[5] = UInt32GetDatum(pg_atomic_read_u32(&pcMap->last_synced_allocated_chunks));
 
 	pfree(pcMap);
 

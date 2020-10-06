@@ -151,6 +151,7 @@ static MdfdVec *_mdfd_getseg(SMgrRelation reln, ForkNumber forkno,
 static BlockNumber _mdnblocks(SMgrRelation reln, ForkNumber forknum,
 							  MdfdVec *seg);
 
+static int sync_pcmap(PageCompressHeader *pcMap, uint32 wait_event_info);
 
 /*
  *	mdinit() -- Initialize private state for magnetic disk storage manager.
@@ -652,15 +653,22 @@ mdextend_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	need_chunks = prealloc_chunks > nchunks ? prealloc_chunks : nchunks;
 	if(pcAddr->allocated_chunks < need_chunks)
 	{
-		int new_allocated_chunks = need_chunks - pcAddr->allocated_chunks;
-//TODO		int pg_atomic_read_u32(&pcMap->allocated_chunks) - pg_atomic_read_u32(&pcMap->last_synced_allocated_chunks);
-
 		chunkno = (pc_chunk_number_t)pg_atomic_fetch_add_u32(&pcMap->allocated_chunks, need_chunks - pcAddr->allocated_chunks) + 1;
 		for(i = pcAddr->allocated_chunks ;i<need_chunks ;i++,chunkno++)
 		{
 			pcAddr->chunknos[i] = chunkno;
 		}
 		pcAddr->allocated_chunks = need_chunks;
+
+		if(compress_address_flush_chunks > 0 &&
+		   pg_atomic_read_u32(&pcMap->allocated_chunks) - pg_atomic_read_u32(&pcMap->last_synced_allocated_chunks) > compress_address_flush_chunks)
+		{
+			if(sync_pcmap(pcMap, WAIT_EVENT_COMPRESS_ADDRESS_FILE_FLUSH) != 0)
+				ereport(data_sync_elevel(ERROR),
+						(errcode_for_file_access(),
+							errmsg("could not msync file \"%s\": %m",
+								FilePathName(v->mdfd_vfd_pca))));
+		}
 	}
 
 	/* write chunks of compressed page */
@@ -1169,7 +1177,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	}
 
 	/* check chunk number */
-	if(nchunks < 0 || nchunks > BLCKSZ / chunk_size)
+	if(nchunks > BLCKSZ / chunk_size)
 	{
 		if (zero_damaged_pages || InRecovery)
 		{
@@ -1185,7 +1193,7 @@ mdread_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	for(i=0; i< nchunks; i++)
 	{
-		if(pcAddr->chunknos[i] <= 0 || pcAddr->chunknos[i] > (BLCKSZ / chunk_size) * RELSEG_SIZE)
+		if(pcAddr->chunknos[i] <= 0 || pcAddr->chunknos[i] > MAX_CHUNK_NUMBER(chunk_size))
 		{
 			if (zero_damaged_pages || InRecovery)
 			{
@@ -1422,7 +1430,7 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	for(i=0; i< pcAddr->allocated_chunks; i++)
 	{
-		if(pcAddr->chunknos[i] <= 0 || pcAddr->chunknos[i] > (BLCKSZ / chunk_size) * RELSEG_SIZE)
+		if(pcAddr->chunknos[i] <= 0 || pcAddr->chunknos[i] > MAX_CHUNK_NUMBER(chunk_size))
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					errmsg("invalid chunk number %u of block %u in file \"%s\"",
@@ -1473,6 +1481,16 @@ mdwrite_pc(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 			pcAddr->chunknos[i] = chunkno;
 		}
 		pcAddr->allocated_chunks = need_chunks;
+
+		if(compress_address_flush_chunks > 0 &&
+		   pg_atomic_read_u32(&pcMap->allocated_chunks) - pg_atomic_read_u32(&pcMap->last_synced_allocated_chunks) > compress_address_flush_chunks)
+		{
+			if(sync_pcmap(pcMap, WAIT_EVENT_COMPRESS_ADDRESS_FILE_FLUSH) != 0)
+				ereport(data_sync_elevel(ERROR),
+						(errcode_for_file_access(),
+							errmsg("could not msync file \"%s\": %m",
+								FilePathName(v->mdfd_vfd_pca))));
+		}
 	}
 
 	/* write chunks of compressed page */
@@ -1721,7 +1739,7 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 	BlockNumber curnblk;
 	BlockNumber priorblocks;
 	BlockNumber	blk;
-	int			curopensegs,chunk_size;
+	int			curopensegs, chunk_size, i;
 	PageCompressHeader	*pcMap;
 	PageCompressAddr	*pcAddr;
 
@@ -1773,19 +1791,13 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 						0x00,
 						SizeofPageCompressAddrFile(chunk_size) - SizeOfPageCompressHeaderData);
 
-				if(pc_msync(pcMap) != 0)
+				if(sync_pcmap(pcMap, WAIT_EVENT_COMPRESS_ADDRESS_FILE_SYNC) != 0)
 					ereport(data_sync_elevel(ERROR),
 							(errcode_for_file_access(),
 								errmsg("could not msync file \"%s\": %m",
 									FilePathName(v->mdfd_vfd_pca))));
 
-				if (FileSync(v->mdfd_vfd_pca, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
-					ereport(data_sync_elevel(ERROR),
-							(errcode_for_file_access(),
-							errmsg("could not fsync file \"%s\": %m",
-									FilePathName(v->mdfd_vfd_pca))));
-
-				if (FileTruncate(v->mdfd_vfd_pcd, SizeofPageCompressAddrFile(chunk_size), WAIT_EVENT_DATA_FILE_TRUNCATE) < 0)
+				if (FileTruncate(v->mdfd_vfd_pcd, 0, WAIT_EVENT_DATA_FILE_TRUNCATE) < 0)
 					ereport(ERROR,
 							(errcode_for_file_access(),
 							errmsg("could not truncate file \"%s\": %m",
@@ -1819,28 +1831,64 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 		{
 			if(IS_COMPRESSED_MAINFORK(reln,forknum))
 			{
+				pc_chunk_number_t max_used_chunkno = (pc_chunk_number_t) 0;
+				BlockNumber lastsegblocks = nblocks - priorblocks;
+				uint32 allocated_chunks;
+
 				chunk_size = PAGE_COMPRESS_CHUNK_SIZE(reln);
 				pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, chunk_size);
 
-				for(blk = nblocks - priorblocks; blk < RELSEG_SIZE; blk++)
+				for(blk = lastsegblocks; blk < RELSEG_SIZE; blk++)
 				{
 					pcAddr = GetPageCompressAddr(pcMap, chunk_size, blk);
 					pcAddr->nchunks = 0;
 				}
 
-				pg_atomic_write_u32(&pcMap->nblocks, nblocks - priorblocks);
+				pg_atomic_write_u32(&pcMap->nblocks, lastsegblocks);
 
-				if(pc_msync(pcMap) != 0)
+				if(sync_pcmap(pcMap, WAIT_EVENT_COMPRESS_ADDRESS_FILE_SYNC) != 0)
 					ereport(data_sync_elevel(ERROR),
 							(errcode_for_file_access(),
 								errmsg("could not msync file \"%s\": %m",
 									FilePathName(v->mdfd_vfd_pca))));
 
-				if (FileSync(v->mdfd_vfd_pca, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
-					ereport(data_sync_elevel(ERROR),
+				allocated_chunks = pg_atomic_read_u32(&pcMap->allocated_chunks);
+
+				/* find the max used chunkno */
+				for(blk = (BlockNumber)0; blk < (BlockNumber)lastsegblocks; blk++)
+				{
+					pcAddr = GetPageCompressAddr(pcMap, chunk_size, blk);
+
+					/* check allocated_chunks for one page */
+					if(pcAddr->allocated_chunks > BLCKSZ / chunk_size)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_DATA_CORRUPTED),
+								errmsg("invalid chunks %u of block %u in file \"%s\"",
+										pcAddr->allocated_chunks, blk, FilePathName(v->mdfd_vfd_pca))));
+					}
+
+					/* check chunknos for one page */
+					for(i = 0; i< pcAddr->allocated_chunks; i++)
+					{
+						if(pcAddr->chunknos[i] == 0 || pcAddr->chunknos[i] > allocated_chunks)
+						{
+							ereport(ERROR,
+									(errcode(ERRCODE_DATA_CORRUPTED),
+									errmsg("invalid chunk number %u of block %u in file \"%s\"",
+											pcAddr->chunknos[i], blk, FilePathName(v->mdfd_vfd_pca))));
+						}
+
+						if(pcAddr->chunknos[i] > max_used_chunkno )
+							max_used_chunkno = pcAddr->chunknos[i];
+					}
+				}
+
+				if (FileTruncate(v->mdfd_vfd_pcd, max_used_chunkno * chunk_size, WAIT_EVENT_DATA_FILE_TRUNCATE) < 0)
+					ereport(ERROR,
 							(errcode_for_file_access(),
-							errmsg("could not fsync file \"%s\": %m",
-									FilePathName(v->mdfd_vfd_pca))));
+							errmsg("could not truncate file \"%s\": %m",
+									FilePathName(v->mdfd_vfd_pcd))));
 			}
 			else
 			{
@@ -1919,16 +1967,10 @@ mdimmedsync(SMgrRelation reln, ForkNumber forknum)
 
 			pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(v->mdfd_vfd_pca, PAGE_COMPRESS_CHUNK_SIZE(reln));
 
-			if(pc_msync(pcMap) != 0)
+			if(sync_pcmap(pcMap, WAIT_EVENT_COMPRESS_ADDRESS_FILE_SYNC) != 0)
 				ereport(data_sync_elevel(ERROR),
 						(errcode_for_file_access(),
 							errmsg("could not msync file \"%s\": %m",
-								FilePathName(v->mdfd_vfd_pca))));
-
-			if (FileSync(v->mdfd_vfd_pca, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
-				ereport(data_sync_elevel(ERROR),
-						(errcode_for_file_access(),
-						errmsg("could not fsync file \"%s\": %m",
 								FilePathName(v->mdfd_vfd_pca))));
 
 			if (FileSync(v->mdfd_vfd_pcd, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
@@ -1993,16 +2035,10 @@ register_dirty_segment(SMgrRelation reln, ForkNumber forknum, MdfdVec *seg)
 
 			pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(seg->mdfd_vfd_pca, PAGE_COMPRESS_CHUNK_SIZE(reln));
 
-			if(pc_msync(pcMap) != 0)
+			if(sync_pcmap(pcMap, WAIT_EVENT_COMPRESS_ADDRESS_FILE_SYNC) != 0)
 				ereport(data_sync_elevel(ERROR),
 						(errcode_for_file_access(),
 							errmsg("could not msync file \"%s\": %m",
-								FilePathName(seg->mdfd_vfd_pca))));
-		
-			if (FileSync(seg->mdfd_vfd_pca, WAIT_EVENT_DATA_FILE_SYNC) < 0)
-				ereport(data_sync_elevel(ERROR),
-						(errcode_for_file_access(),
-						errmsg("could not fsync file \"%s\": %m",
 								FilePathName(seg->mdfd_vfd_pca))));
 
 			if (FileSync(seg->mdfd_vfd_pcd, WAIT_EVENT_DATA_FILE_SYNC) < 0)
@@ -2230,7 +2266,7 @@ _mdfd_openseg(SMgrRelation reln, ForkNumber forknum, BlockNumber segno,
 	v = &reln->md_seg_fds[forknum][segno];
 	v->mdfd_vfd = fd;
 	v->mdfd_vfd_pca = fd_pca;
-	v->mdfd_vfd_pca = fd_pcd;
+	v->mdfd_vfd_pcd = fd_pcd;
 	v->mdfd_segno = segno;
 
 	Assert(_mdnblocks(reln, forknum, v) <= ((BlockNumber) RELSEG_SIZE));
@@ -2439,25 +2475,12 @@ mdsyncfiletag(const FileTag *ftag, char *path)
 		}
 
 		pcMap = (PageCompressHeader *)GetPageCompressMemoryMap(file, PAGE_COMPRESS_CHUNK_SIZE(reln));
-		result = pc_msync(pcMap);
-		save_errno = errno;
-
-		if(result != 0)
-		{
-			if (need_to_close)
-				FileClose(file);
-
-			errno = save_errno;
-			return result;
-		}
-
-		/* Sync the page compression address file. */
-		result = FileSync(file, WAIT_EVENT_DATA_FILE_SYNC);
+		result = sync_pcmap(pcMap, WAIT_EVENT_COMPRESS_ADDRESS_FILE_SYNC);
 		save_errno = errno;
 
 		if (need_to_close)
 			FileClose(file);
-		
+
 		if(result != 0)
 		{
 			errno = save_errno;
@@ -2583,4 +2606,31 @@ mdfiletagmatches(const FileTag *ftag, const FileTag *candidate)
 	 * the ftag from the SYNC_FILTER_REQUEST request, so they're forgotten.
 	 */
 	return ftag->rnode.dbNode == candidate->rnode.dbNode;
+}
+
+static int
+sync_pcmap(PageCompressHeader * pcMap, uint32 wait_event_info)
+{
+	int returnCode;
+	uint32 nblocks, allocated_chunks, last_synced_nblocks, last_synced_allocated_chunks;
+
+	nblocks = pg_atomic_read_u32(&pcMap->nblocks);
+	allocated_chunks = pg_atomic_read_u32(&pcMap->allocated_chunks);
+	last_synced_nblocks = pg_atomic_read_u32(&pcMap->last_synced_nblocks);
+	last_synced_allocated_chunks = pg_atomic_read_u32(&pcMap->last_synced_allocated_chunks);
+
+	pgstat_report_wait_start(wait_event_info);
+	returnCode = pc_msync(pcMap);
+	pgstat_report_wait_end();
+
+	if(returnCode == 0)
+	{
+		if(last_synced_nblocks != nblocks)
+			pg_atomic_write_u32(&pcMap->last_synced_nblocks, nblocks);
+
+		if(last_synced_allocated_chunks != allocated_chunks)
+			pg_atomic_write_u32(&pcMap->last_synced_allocated_chunks, allocated_chunks);
+	}
+
+	return returnCode;
 }

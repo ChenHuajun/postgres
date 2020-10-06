@@ -29,6 +29,8 @@
 #include "storage/bufpage.h"
 #include "storage/checksum.h"
 #include "storage/checksum_impl.h"
+#include "storage/page_compression.h"
+#include "storage/page_compression_impl.h"
 
 
 static int64 files = 0;
@@ -188,18 +190,70 @@ skipfile(const char *fn)
 }
 
 static void
-scan_file(const char *fn, BlockNumber segmentno)
+scan_file(const char *fn, BlockNumber segmentno, bool is_compressed_datafile)
 {
 	PGAlignedBlock buf;
 	PageHeader	header = (PageHeader) buf.data;
-	int			f;
+	int			f, f_pca;
 	BlockNumber blockno;
 	int			flags;
+	char		fn_pca[MAXPGPATH];
+	PageCompressHeader	*pcMap;
 
 	Assert(mode == PG_MODE_ENABLE ||
 		   mode == PG_MODE_CHECK);
 
+	/* init memory map of compression page address file */
+	if(is_compressed_datafile)
+	{
+		int					r;
+		PageCompressHeader	pchdr;
+
+		strlcpy(fn_pca, fn, sizeof(fn_pca));
+		fn_pca[strlen(fn_pca) -1] = 'a';
+
+		f_pca = open(fn_pca, PG_BINARY | O_RDONLY, 0);
+
+		if (f_pca < 0)
+		{
+			pg_log_error("could not open file \"%s\": %m", fn_pca);
+			exit(1);
+		}
+
+		r = read(f_pca, &pchdr, sizeof(PageCompressHeader));
+		if(r != sizeof(PageCompressHeader))
+		{
+			if (r < 0)
+				pg_log_error("could not read page compression address file head in file \"%s\": %m",
+							fn_pca);
+			else
+				pg_log_error("could not read page compression address file head in file \"%s\": read %d of %d",
+							fn_pca, r, (int)sizeof(PageCompressHeader));
+			exit(1);
+		}
+
+		if(pchdr.chunk_size != BLCKSZ / 2 &&
+		   pchdr.chunk_size != BLCKSZ / 4 &&
+		   pchdr.chunk_size != BLCKSZ / 8)
+		{
+			pg_log_error("the page compression address file head is corrupted in file \"%s\"",
+						fn_pca);
+			exit(1);
+		}
+
+		pcMap = pc_mmap(f_pca, pchdr.chunk_size, true);
+		if(pcMap == MAP_FAILED)
+		{
+			pg_log_error("Failed to mmap page compression address file %s: %m",
+						fn_pca);
+			exit(1);
+		}
+
+		close(f_pca);
+	}
+
 	flags = (mode == PG_MODE_ENABLE) ? O_RDWR : O_RDONLY;
+
 	f = open(fn, PG_BINARY | flags, 0);
 
 	if (f < 0)
@@ -213,19 +267,106 @@ scan_file(const char *fn, BlockNumber segmentno)
 	for (blockno = 0;; blockno++)
 	{
 		uint16		csum;
-		int			r = read(f, buf.data, BLCKSZ);
+		int			r;
+		off_t		first_pc_chunk_pos;
 
-		if (r == 0)
-			break;
-		if (r != BLCKSZ)
+		if(is_compressed_datafile)
 		{
-			if (r < 0)
-				pg_log_error("could not read block %u in file \"%s\": %m",
-							 blockno, fn);
-			else
-				pg_log_error("could not read block %u in file \"%s\": read %d of %d",
-							 blockno, fn, r, BLCKSZ);
-			exit(1);
+			PGAlignedBlock		pcd_buf;
+			int					nbytes,i,read_amount,range;
+			off_t				seekpos;
+			char				*buffer_pos;
+			PageCompressAddr	*pcAddr;
+			bool				is_compressed_block = true;
+
+			if(blockno >= pcMap->nblocks)
+				break;
+
+			pcAddr = GetPageCompressAddr(pcMap, pcMap->chunk_size, blockno);
+
+			/* New pages have no checksum yet */
+			if(pcAddr->nchunks == 0)
+			{
+				blocks++;
+				continue;
+			}
+
+			if(pcAddr->nchunks == BLCKSZ / pcMap->chunk_size)
+				is_compressed_block = false;
+
+			for(i=0; i< pcAddr->nchunks; i++)
+			{
+				if(is_compressed_block)
+					buffer_pos = pcd_buf.data + pcMap->chunk_size * i;
+				else
+					buffer_pos = buf.data + pcMap->chunk_size * i;
+
+				seekpos = (off_t) OffsetOfPageCompressChunk(pcMap->chunk_size, pcAddr->chunknos[i]);
+				if(i == 0)
+					first_pc_chunk_pos = seekpos;
+
+				range = 1;
+				while(i < pcAddr->nchunks - 1 && pcAddr->chunknos[i + 1] == pcAddr->chunknos[i] + 1)
+				{
+					range++;
+					i++;
+				}
+				read_amount = pcMap->chunk_size * range;
+
+				if (lseek(f, seekpos, SEEK_SET) < 0)
+				{
+					pg_log_error("seek failed for block %u in file \"%s\": %m", blockno, fn);
+					exit(1);
+				}
+
+				nbytes = read(f, buffer_pos, read_amount);
+
+				if (nbytes != read_amount)
+				{
+					if (nbytes < 0)
+						pg_log_error("could not read block %u in file \"%s\": %m",
+									blockno, fn);
+					else
+						pg_log_error("could not read block %u in file \"%s\": read %d of %d",
+									blockno, fn, nbytes, read_amount);
+					exit(1);
+				}
+			}
+
+			/* decompress chunk data */
+			if(is_compressed_block)
+			{
+				nbytes = decompress_page(pcd_buf.data, buf.data, pcMap->algorithm);
+				if (nbytes != BLCKSZ)
+				{
+					if(nbytes == -2)
+						pg_log_error("could not recognized compression algorithm %d for file \"%s\"",
+									pcMap->algorithm, fn);
+					else
+						pg_log_error("could not decompress block %u in file \"%s\": decompress %d of %d bytes",
+									blockno, fn, nbytes, BLCKSZ);
+					exit(1);
+				}
+			}
+
+			r = pcMap->chunk_size * pcAddr->nchunks;
+		}
+		else
+		{
+			r = read(f, buf.data, BLCKSZ);
+
+			if (r == 0)
+				break;
+			if (r != BLCKSZ)
+			{
+				if (r < 0)
+					pg_log_error("could not read block %u in file \"%s\": %m",
+								blockno, fn);
+				else
+					pg_log_error("could not read block %u in file \"%s\": read %d of %d",
+								blockno, fn, r, BLCKSZ);
+				exit(1);
+			}
 		}
 		blocks++;
 
@@ -252,24 +393,49 @@ scan_file(const char *fn, BlockNumber segmentno)
 			/* Set checksum in page header */
 			header->pd_checksum = csum;
 
-			/* Seek back to beginning of block */
-			if (lseek(f, -BLCKSZ, SEEK_CUR) < 0)
+			if(is_compressed_datafile)
 			{
-				pg_log_error("seek failed for block %u in file \"%s\": %m", blockno, fn);
-				exit(1);
-			}
+				/* Seek back to beginning of first chunk */
+				if (lseek(f, first_pc_chunk_pos, SEEK_SET) < 0)
+				{
+					pg_log_error("seek failed for block %u in file \"%s\": %m", blockno, fn);
+					exit(1);
+				}
 
-			/* Write block with checksum */
-			w = write(f, buf.data, BLCKSZ);
-			if (w != BLCKSZ)
+				/* Write block with checksum */
+				w = write(f, header, sizeof(PageHeaderData));
+				if (w != sizeof(PageHeaderData))
+				{
+					if (w < 0)
+						pg_log_error("could not write block %u in file \"%s\": %m",
+									blockno, fn);
+					else
+						pg_log_error("could not write block %u in file \"%s\": wrote %d of %d",
+									blockno, fn, w, (int)sizeof(PageHeaderData));
+					exit(1);
+				}
+			}
+			else
 			{
-				if (w < 0)
-					pg_log_error("could not write block %u in file \"%s\": %m",
-								 blockno, fn);
-				else
-					pg_log_error("could not write block %u in file \"%s\": wrote %d of %d",
-								 blockno, fn, w, BLCKSZ);
-				exit(1);
+				/* Seek back to beginning of block */
+				if (lseek(f, -BLCKSZ, SEEK_CUR) < 0)
+				{
+					pg_log_error("seek failed for block %u in file \"%s\": %m", blockno, fn);
+					exit(1);
+				}
+
+				/* Write block with checksum */
+				w = write(f, buf.data, BLCKSZ);
+				if (w != BLCKSZ)
+				{
+					if (w < 0)
+						pg_log_error("could not write block %u in file \"%s\": %m",
+									blockno, fn);
+					else
+						pg_log_error("could not write block %u in file \"%s\": wrote %d of %d",
+									blockno, fn, w, BLCKSZ);
+					exit(1);
+				}
 			}
 		}
 
@@ -286,6 +452,8 @@ scan_file(const char *fn, BlockNumber segmentno)
 	}
 
 	close(f);
+	if(is_compressed_datafile)
+		pc_munmap(pcMap);
 }
 
 /*
@@ -343,17 +511,32 @@ scan_directory(const char *basedir, const char *subdir, bool sizeonly)
 			char	   *forkpath,
 					   *segmentpath;
 			BlockNumber segmentno = 0;
+			size_t		filenamelength;
+			bool		is_compressed_datafile = false;
+
 
 			if (skipfile(de->d_name))
 				continue;
 
+			/* check if is compressed page file */
+			strlcpy(fnonly, de->d_name, sizeof(fnonly));
+			filenamelength = strlen(fnonly);
+			if(filenamelength >= 4)
+			{
+				if(strncmp(fnonly + filenamelength - 4, "_pca", 4) == 0)
+					continue;
+				else if(strncmp(fnonly + filenamelength - 4, "_pcd", 4) == 0)
+				{
+					is_compressed_datafile = true;
+					fnonly[filenamelength - 4] = '\0';
+				}
+			}
 			/*
 			 * Cut off at the segment boundary (".") to get the segment number
 			 * in order to mix it into the checksum. Then also cut off at the
 			 * fork boundary, to get the filenode the file belongs to for
 			 * filtering.
 			 */
-			strlcpy(fnonly, de->d_name, sizeof(fnonly));
 			segmentpath = strchr(fnonly, '.');
 			if (segmentpath != NULL)
 			{
@@ -382,7 +565,7 @@ scan_directory(const char *basedir, const char *subdir, bool sizeonly)
 			 * the items in the data folder.
 			 */
 			if (!sizeonly)
-				scan_file(fn, segmentno);
+				scan_file(fn, segmentno, is_compressed_datafile);
 		}
 #ifndef WIN32
 		else if (S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode))

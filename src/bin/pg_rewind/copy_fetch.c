@@ -14,17 +14,24 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "common/string.h"
 #include "datapagemap.h"
 #include "fetch.h"
 #include "file_ops.h"
 #include "filemap.h"
 #include "pg_rewind.h"
+#include "storage/page_compression.h"
 
 static void recurse_dir(const char *datadir, const char *path,
 						process_file_callback_t callback);
 
-static void execute_pagemap(datapagemap_t *pagemap, const char *path);
-
+static void execute_pagemap(datapagemap_t *pagemap, const char *path,
+							bool iscompressedrel, int chunk_size,
+							int prealloc_chunks, compressedpagemap_t *first_compressedpagemap);
+static void rewind_copy_compressed_relation_range(const char *path, int chunk_size, 
+												  BlockNumber blocknum, int nblocks,
+												  int prealloc_chunks,
+												  compressedpagemap_t *first_compressedpagemap);
 /*
  * Traverse through all files in a data directory, calling 'callback'
  * for each file.
@@ -95,10 +102,32 @@ recurse_dir(const char *datadir, const char *parentpath,
 			snprintf(path, sizeof(path), "%s", xlde->d_name);
 
 		if (S_ISREG(fst.st_mode))
-			callback(path, FILE_TYPE_REGULAR, fst.st_size, NULL);
+		{
+			if(pg_str_endswith(path, "_pca"))
+			{			
+				int					fd, ret;
+				PageCompressHeader	pchdr;
+
+				/* read header of compressed relation address file */
+				fd = open(fullpath, O_RDONLY | PG_BINARY, 0);
+				if (fd < 0)
+					pg_fatal("could not open file \"%s\": %m",
+							fullpath);
+
+				ret = read(fd, &pchdr, sizeof(PageCompressHeader));
+				if(ret == sizeof(PageCompressHeader))
+					callback(path, FILE_TYPE_REGULAR, fst.st_size, NULL, &pchdr);
+				else
+					callback(path, FILE_TYPE_REGULAR, fst.st_size, NULL, NULL);
+
+				close(fd);
+			}
+			else
+				callback(path, FILE_TYPE_REGULAR, fst.st_size, NULL, NULL);
+		}
 		else if (S_ISDIR(fst.st_mode))
 		{
-			callback(path, FILE_TYPE_DIRECTORY, 0, NULL);
+			callback(path, FILE_TYPE_DIRECTORY, 0, NULL, NULL);
 			/* recurse to handle subdirectories */
 			recurse_dir(datadir, path, callback);
 		}
@@ -121,7 +150,7 @@ recurse_dir(const char *datadir, const char *parentpath,
 						 fullpath);
 			link_target[len] = '\0';
 
-			callback(path, FILE_TYPE_SYMLINK, 0, link_target);
+			callback(path, FILE_TYPE_SYMLINK, 0, link_target, NULL);
 
 			/*
 			 * If it's a symlink within pg_tblspc, we need to recurse into it,
@@ -145,6 +174,46 @@ recurse_dir(const char *datadir, const char *parentpath,
 	if (closedir(xldir))
 		pg_fatal("could not close directory \"%s\": %m",
 				 fullparentpath);
+}
+
+void
+local_fetchCompressedRelationAddress(filemap_t *map)
+{
+	char		srcpath[MAXPGPATH];
+	file_entry_t *entry;
+	int			chunk_size;
+	int			fd, i;
+	PageCompressHeader	*pcMap;
+
+	for (i = 0; i < map->narray; i++)
+	{
+		entry = map->array[i];
+
+		if(entry->type != FILE_TYPE_COMPRESSED_REL)
+			continue;
+
+		chunk_size = entry->chunk_size;
+
+		/* read page compression file header of source relation */
+		snprintf(srcpath, sizeof(srcpath), "%s/%s", datadir_source, entry->pca->path);
+		fd = open(srcpath, O_RDONLY | PG_BINARY, 0);
+		if (fd < 0)
+			pg_fatal("could not open source file \"%s\": %m",
+					srcpath);
+
+		pcMap = pc_mmap(fd, chunk_size, true);
+		if(pcMap == MAP_FAILED)
+			pg_fatal("Failed to mmap page compression address file %s: %m",
+					srcpath);
+
+		if (close(fd) != 0)
+			pg_fatal("could not close file \"%s\": %m", srcpath);
+		
+		fill_compressed_relation_address(entry, NULL, pcMap);
+
+		if (pc_munmap(pcMap) != 0)
+			pg_fatal("could not munmap file \"%s\": %m", srcpath);
+	}
 }
 
 /*
@@ -198,6 +267,85 @@ rewind_copy_file_range(const char *path, off_t begin, off_t end, bool trunc)
 }
 
 /*
+ * Copy a file from source to target, between 'begin' and 'end' offsets.
+ *
+ * If 'trunc' is true, any existing file with the same name is truncated.
+ */
+static void 
+rewind_copy_compressed_relation_range(const char *path, int chunk_size, 
+									  BlockNumber blocknum, int nblocks,
+									  int prealloc_chunks,
+									  compressedpagemap_t *first_compressedpagemap)
+{
+	PGAlignedBlock buf;
+	char		srcpath[MAXPGPATH];
+	int			fd, i;
+	compressedpagemap_t *compressedpagemap = first_compressedpagemap;
+
+	/* open source compressed relation data file */
+	snprintf(srcpath, sizeof(srcpath), "%s/%s_pcd", datadir_source, path);
+
+	fd = open(srcpath, O_RDONLY | PG_BINARY, 0);
+	if (fd < 0)
+		pg_fatal("could not open source file \"%s\": %m",
+				srcpath);
+
+	/* copy blocks from source to target */
+	open_target_compressed_relation(path);
+
+	for(i=0; i < nblocks; i++)
+	{
+		int			j;
+		BlockNumber	blkno = blocknum + i;
+
+		while(compressedpagemap != NULL)
+		{
+			if(compressedpagemap->blkno == blkno)
+				break;
+			compressedpagemap = compressedpagemap->next;
+		}
+
+		if(compressedpagemap == NULL)
+			pg_fatal("could not find compressedpagemap for block %d of file \"%s\"",
+					 blkno, path);
+
+		for(j=0; j < compressedpagemap->nchunks; j++)
+		{
+			int		readlen;
+			int		seekpos;
+			int		length = chunk_size;
+			pc_chunk_number_t	chunkno = compressedpagemap->chunknos[j];
+
+			seekpos = OffsetOfPageCompressChunk(chunk_size, chunkno);
+
+			while(j + 1 < compressedpagemap->nchunks && 
+			   compressedpagemap->chunknos[j + 1]== compressedpagemap->chunknos[j] + 1)
+			{
+				length += chunk_size;
+				j++;
+			}
+
+			if (lseek(fd, seekpos, SEEK_SET) == -1)
+				pg_fatal("could not seek in source file: %m");
+
+			readlen = read(fd, buf.data, length);
+			if (readlen < 0)
+				pg_fatal("could not read file \"%s\": %m",
+						srcpath);
+			else if (readlen == 0)
+				pg_fatal("unexpected EOF while reading file \"%s\"", srcpath);
+
+			write_target_compressed_relation_chunk(buf.data, readlen, blkno, chunkno,
+												   compressedpagemap->nchunks, prealloc_chunks);
+		}
+	}
+
+	if (close(fd) != 0)
+		pg_fatal("could not close file \"%s\": %m", srcpath);
+}
+
+
+/*
  * Copy all relation data files from datadir_source to datadir_target, which
  * are marked in the given data page map.
  */
@@ -209,8 +357,15 @@ copy_executeFileMap(filemap_t *map)
 
 	for (i = 0; i < map->narray; i++)
 	{
+		bool	iscompressedrel = false;
+
 		entry = map->array[i];
-		execute_pagemap(&entry->pagemap, entry->path);
+
+		if(entry->type == FILE_TYPE_COMPRESSED_REL)
+			iscompressedrel = true;
+
+		execute_pagemap(&entry->pagemap, entry->path, iscompressedrel, entry->chunk_size,
+					    entry->prealloc_chunks, entry->first_compressedpagemap);
 
 		switch (entry->action)
 		{
@@ -223,12 +378,23 @@ copy_executeFileMap(filemap_t *map)
 				break;
 
 			case FILE_ACTION_TRUNCATE:
-				truncate_target_file(entry->path, entry->newsize);
+				if(iscompressedrel)
+					truncate_target_compressed_relation(entry->path, entry->newblocks);
+				else
+					truncate_target_file(entry->path, entry->newsize);
 				break;
 
 			case FILE_ACTION_COPY_TAIL:
-				rewind_copy_file_range(entry->path, entry->oldsize,
-									   entry->newsize, false);
+				if(iscompressedrel)
+					rewind_copy_compressed_relation_range(entry->path,
+														  entry->chunk_size,
+														  entry->oldblocks,
+														  entry->newblocks - entry->oldblocks,
+														  entry->prealloc_chunks,
+														  entry->first_compressedpagemap);
+				else
+					rewind_copy_file_range(entry->path, entry->oldsize,
+										entry->newsize, false);
 				break;
 
 			case FILE_ACTION_CREATE:
@@ -245,7 +411,9 @@ copy_executeFileMap(filemap_t *map)
 }
 
 static void
-execute_pagemap(datapagemap_t *pagemap, const char *path)
+execute_pagemap(datapagemap_t *pagemap, const char *path,
+				bool iscompressedrel, int chunk_size,
+				int prealloc_chunks, compressedpagemap_t *first_compressedpagemap)
 {
 	datapagemap_iterator_t *iter;
 	BlockNumber blkno;
@@ -254,8 +422,14 @@ execute_pagemap(datapagemap_t *pagemap, const char *path)
 	iter = datapagemap_iterate(pagemap);
 	while (datapagemap_next(iter, &blkno))
 	{
-		offset = blkno * BLCKSZ;
-		rewind_copy_file_range(path, offset, offset + BLCKSZ, false);
+		if(iscompressedrel)
+			rewind_copy_compressed_relation_range(path, chunk_size, blkno, 1,
+												  prealloc_chunks, first_compressedpagemap);
+		else
+		{
+			offset = blkno * BLCKSZ;
+			rewind_copy_file_range(path, offset, offset + BLCKSZ, false);
+		}
 		/* Ok, this block has now been copied from new data dir to old */
 	}
 	pg_free(iter);

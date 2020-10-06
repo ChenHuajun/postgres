@@ -143,7 +143,7 @@ do { \
  * (at least on 4-byte boundary).
  */
 static uint32
-pg_checksum_block(const PGChecksummablePage *page)
+pg_checksum_block(const PGChecksummablePage *page, size_t size)
 {
 	uint32		sums[N_SUMS];
 	uint32		result = 0;
@@ -157,7 +157,7 @@ pg_checksum_block(const PGChecksummablePage *page)
 	memcpy(sums, checksumBaseOffsets, sizeof(checksumBaseOffsets));
 
 	/* main checksum calculation */
-	for (i = 0; i < (uint32) (BLCKSZ / (sizeof(uint32) * N_SUMS)); i++)
+	for (i = 0; i < (uint32) (size / (sizeof(uint32) * N_SUMS)); i++)
 		for (j = 0; j < N_SUMS; j++)
 			CHECKSUM_COMP(sums[j], page->data[i][j]);
 
@@ -201,7 +201,7 @@ pg_checksum_page(char *page, BlockNumber blkno)
 	 */
 	save_checksum = cpage->phdr.pd_checksum;
 	cpage->phdr.pd_checksum = 0;
-	checksum = pg_checksum_block(cpage);
+	checksum = pg_checksum_block(cpage, BLCKSZ);
 	cpage->phdr.pd_checksum = save_checksum;
 
 	/* Mix in the block number to detect transposed pages */

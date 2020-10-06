@@ -19,6 +19,7 @@
 #include "filemap.h"
 #include "pg_rewind.h"
 #include "storage/fd.h"
+#include "storage/page_compression.h"
 
 filemap_t  *filemap = NULL;
 
@@ -155,7 +156,7 @@ filemap_create(void)
  */
 void
 process_source_file(const char *path, file_type_t type, size_t newsize,
-					const char *link_target)
+					const char *link_target, const PageCompressHeader *pchdr)
 {
 	bool		exists;
 	char		localpath[MAXPGPATH];
@@ -312,6 +313,10 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 					action = FILE_ACTION_NONE;
 			}
 			break;
+		case FILE_TYPE_COMPRESSED_REL:
+			/* can't happen. */
+			Assert(false);
+			break;
 	}
 
 	/* Create a new entry for this file */
@@ -326,6 +331,17 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 	entry->pagemap.bitmap = NULL;
 	entry->pagemap.bitmapsize = 0;
 	entry->isrelfile = isRelDataFile(path);
+	entry->prealloc_chunks = 0;
+	entry->target_pchdr = NULL;
+	entry->first_compressedpagemap = NULL;
+	entry->last_compressedpagemap = NULL;
+	if(pchdr != NULL)
+	{
+		entry->source_pchdr = pg_malloc(sizeof(PageCompressHeader));
+		memcpy(entry->source_pchdr, pchdr, sizeof(PageCompressHeader));
+	}
+	else
+		entry->source_pchdr = NULL;
 
 	if (map->last)
 	{
@@ -346,11 +362,14 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
  */
 void
 process_target_file(const char *path, file_type_t type, size_t oldsize,
-					const char *link_target)
+					const char *link_target, const PageCompressHeader *pchdr)
 {
 	bool		exists;
+	char		localpath[MAXPGPATH];
+	struct stat statbuf;
 	file_entry_t key;
 	file_entry_t *key_ptr;
+	file_entry_t **e;
 	filemap_t  *map = filemap;
 	file_entry_t *entry;
 
@@ -359,6 +378,14 @@ process_target_file(const char *path, file_type_t type, size_t oldsize,
 	 * from the target data folder all paths which have been filtered out from
 	 * the source data folder when processing the source files.
 	 */
+
+	snprintf(localpath, sizeof(localpath), "%s/%s", datadir_target, path);
+	if (lstat(localpath, &statbuf) < 0)
+	{
+		if (errno != ENOENT)
+			pg_fatal("could not stat file \"%s\": %m",
+					 localpath);
+	}
 
 	if (map->array == NULL)
 	{
@@ -384,11 +411,11 @@ process_target_file(const char *path, file_type_t type, size_t oldsize,
 
 	key.path = (char *) path;
 	key_ptr = &key;
-	exists = (bsearch(&key_ptr, map->array, map->narray, sizeof(file_entry_t *),
-					  path_cmp) != NULL);
+	e = bsearch(&key_ptr, map->array, map->narray, sizeof(file_entry_t *),
+					  path_cmp);
 
 	/* Remove any file or folder that doesn't exist in the source system. */
-	if (!exists)
+	if (e == NULL)
 	{
 		entry = pg_malloc(sizeof(file_entry_t));
 		entry->path = pg_strdup(path);
@@ -401,6 +428,17 @@ process_target_file(const char *path, file_type_t type, size_t oldsize,
 		entry->pagemap.bitmap = NULL;
 		entry->pagemap.bitmapsize = 0;
 		entry->isrelfile = isRelDataFile(path);
+		entry->prealloc_chunks = 0;
+		entry->source_pchdr = NULL;
+		entry->first_compressedpagemap = NULL;
+		entry->last_compressedpagemap = NULL;
+		if(pchdr != NULL)
+		{
+			entry->target_pchdr = pg_malloc(sizeof(PageCompressHeader));
+			memcpy(entry->target_pchdr, pchdr, sizeof(PageCompressHeader));
+		}
+		else
+			entry->target_pchdr = NULL;
 
 		if (map->last == NULL)
 			map->first = entry;
@@ -413,8 +451,114 @@ process_target_file(const char *path, file_type_t type, size_t oldsize,
 	{
 		/*
 		 * We already handled all files that exist in the source system in
-		 * process_source_file().
+		 * process_source_file(). The only thing should to do is setting
+		 * target_pchdr.
 		 */
+		entry = *e;
+		if(pchdr != NULL)
+		{
+			entry->target_pchdr = pg_malloc(sizeof(PageCompressHeader));
+			memcpy(entry->target_pchdr, pchdr, sizeof(PageCompressHeader));
+		}
+		else
+			entry->target_pchdr = NULL;
+	}
+}
+
+/*
+ * 
+ * 
+ */
+void
+process_compressed_relation(void)
+{
+	char		path[MAXPGPATH];
+	file_entry_t key;
+	file_entry_t *key_ptr;
+	file_entry_t *entry;
+	file_entry_t **e;
+	filemap_t	 *map = filemap;
+	int			i;
+
+	Assert(map->array);
+
+	for(i = 0; i < map->narray; i++)
+	{
+		entry = map->array[i];
+		if(entry->isrelfile)
+		{
+			bool			iscompressedrel = false;
+			file_entry_t	*pca_entry, *pcd_entry;
+			uint16			chunk_size;
+
+			if(entry->action != FILE_ACTION_COPY_TAIL &&
+				entry->action != FILE_ACTION_TRUNCATE &&
+				entry->action != FILE_ACTION_NONE)
+				continue;
+
+			/* check is this a compressed relation file */
+			snprintf(path, sizeof(path), "%s_pca", entry->path);
+			key.path = path;
+			key_ptr = &key;
+			e = bsearch(&key_ptr, map->array, map->narray, sizeof(file_entry_t *),
+							path_cmp);
+			if(e == NULL)
+				continue;
+			pca_entry = *e;
+
+			snprintf(path, sizeof(path), "%s_pcd", entry->path);
+			key.path = path;
+			key_ptr = &key;
+			e = bsearch(&key_ptr, map->array, map->narray, sizeof(file_entry_t *),
+							path_cmp);
+
+			/* check is this a valid compressed relation file */
+			if(e && pca_entry->source_pchdr && pca_entry->target_pchdr &&
+			   entry->newsize == 0 && entry->oldsize == 0)
+			{
+				pcd_entry = *e;
+				chunk_size = pca_entry->source_pchdr->chunk_size;
+
+				if((chunk_size == BLCKSZ / 2 || chunk_size == BLCKSZ / 4 || chunk_size == BLCKSZ / 8) &&
+				   pca_entry->target_pchdr->algorithm == pca_entry->source_pchdr->algorithm &&
+				   pca_entry->target_pchdr->chunk_size == chunk_size)
+				   {
+					   iscompressedrel = true;
+				   }
+			}
+
+			if(iscompressedrel)
+			{
+				int			action;
+				uint32		oldblocks = pca_entry->target_pchdr->nblocks;
+				uint32		newblocks = pca_entry->source_pchdr->nblocks;
+
+				if (oldblocks < newblocks)
+					action = FILE_ACTION_COPY_TAIL;
+				else if (oldblocks > newblocks)
+					action = FILE_ACTION_TRUNCATE;
+				else
+					action = FILE_ACTION_NONE;
+
+				entry->type = FILE_TYPE_COMPRESSED_REL;
+				entry->action = action;
+				entry->chunk_size = chunk_size;
+				entry->oldblocks = oldblocks;
+				entry->newblocks = newblocks;
+				entry->pca = pca_entry;
+				entry->pcd = pcd_entry;
+
+				/* we copy data when processing the main fork file, and do not need to separately 
+				   copy the pca and pcd file  */
+				pca_entry->action = FILE_ACTION_NONE;
+				pcd_entry->action = FILE_ACTION_NONE;
+			}
+			else
+			{
+				/* copy the entire file for invalid compressed relation file */
+				entry->action = FILE_ACTION_COPY;
+			}
+		}
 	}
 }
 
@@ -455,6 +599,7 @@ process_block_change(ForkNumber forknum, RelFileNode rnode, BlockNumber blkno)
 
 	if (entry)
 	{
+		size_t	newsize, oldsize;
 		Assert(entry->isrelfile);
 
 		switch (entry->action)
@@ -462,7 +607,11 @@ process_block_change(ForkNumber forknum, RelFileNode rnode, BlockNumber blkno)
 			case FILE_ACTION_NONE:
 			case FILE_ACTION_TRUNCATE:
 				/* skip if we're truncating away the modified block anyway */
-				if ((blkno_inseg + 1) * BLCKSZ <= entry->newsize)
+				if(entry->type == FILE_TYPE_COMPRESSED_REL)
+					newsize = BLCKSZ * entry->newblocks;
+				else
+					newsize = entry->newsize;
+				if ((blkno_inseg + 1) * BLCKSZ <= newsize)
 					datapagemap_add(&entry->pagemap, blkno_inseg);
 				break;
 
@@ -472,7 +621,11 @@ process_block_change(ForkNumber forknum, RelFileNode rnode, BlockNumber blkno)
 				 * skip the modified block if it is part of the "tail" that
 				 * we're copying anyway.
 				 */
-				if ((blkno_inseg + 1) * BLCKSZ <= entry->oldsize)
+				if(entry->type == FILE_TYPE_COMPRESSED_REL)
+					oldsize = BLCKSZ * entry->oldblocks;
+				else
+					oldsize = entry->oldsize;
+				if ((blkno_inseg + 1) * BLCKSZ <= oldsize)
 					datapagemap_add(&entry->pagemap, blkno_inseg);
 				break;
 
@@ -616,6 +769,9 @@ action_to_str(file_action_t action)
 
 /*
  * Calculate the totals needed for progress reports.
+ * 
+ * For compressed relation, just returns an estimate and don't consider
+ * compressed relation address file.
  */
 void
 calculate_totals(void)
@@ -631,7 +787,7 @@ calculate_totals(void)
 	{
 		entry = map->array[i];
 
-		if (entry->type != FILE_TYPE_REGULAR)
+		if (entry->type != FILE_TYPE_REGULAR && entry->type != FILE_TYPE_COMPRESSED_REL)
 			continue;
 
 		map->total_size += entry->newsize;
@@ -642,19 +798,33 @@ calculate_totals(void)
 			continue;
 		}
 
-		if (entry->action == FILE_ACTION_COPY_TAIL)
-			map->fetch_size += (entry->newsize - entry->oldsize);
-
-		if (entry->pagemap.bitmapsize > 0)
+		if(entry->type == FILE_TYPE_COMPRESSED_REL)
 		{
-			datapagemap_iterator_t *iter;
-			BlockNumber blk;
+			compressedpagemap_t *compressedpagemap;
 
-			iter = datapagemap_iterate(&entry->pagemap);
-			while (datapagemap_next(iter, &blk))
-				map->fetch_size += BLCKSZ;
+			compressedpagemap = entry->first_compressedpagemap;
+			while(compressedpagemap != NULL)
+			{
+				map->fetch_size += entry->chunk_size * compressedpagemap->nchunks;
+				compressedpagemap = compressedpagemap->next;
+			}
+		}
+		else
+		{
+			if (entry->action == FILE_ACTION_COPY_TAIL)
+				map->fetch_size += (entry->newsize - entry->oldsize);
 
-			pg_free(iter);
+			if (entry->pagemap.bitmapsize > 0)
+			{
+				datapagemap_iterator_t *iter;
+				BlockNumber blk;
+
+				iter = datapagemap_iterate(&entry->pagemap);
+				while (datapagemap_next(iter, &blk))
+					map->fetch_size += BLCKSZ;
+
+				pg_free(iter);
+			}
 		}
 	}
 }
@@ -824,4 +994,120 @@ final_filemap_cmp(const void *a, const void *b)
 		return strcmp(fb->path, fa->path);
 	else
 		return strcmp(fa->path, fb->path);
+}
+
+void
+fill_compressed_relation_address(file_entry_t *entry, const char *path, PageCompressHeader *pcMap)
+{
+	compressedpagemap_t *compressedpagemap;
+	PageCompressAddr	*pcAddr;
+	int					min_allocated_chunks = 0;
+	datapagemap_iterator_t *iter;
+	BlockNumber			blkno;
+	int					i;
+	filemap_t  			*map = filemap;
+
+	if(entry == NULL)
+	{
+		file_entry_t key;
+		file_entry_t *key_ptr;
+		file_entry_t **e;
+
+		key.path = (char *) path;
+		key_ptr = &key;
+		e = bsearch(&key_ptr, map->array, map->narray, sizeof(file_entry_t *),
+					path_cmp);
+
+		if(e == NULL)
+			pg_fatal("can not find compressed relation file \"%s\" in filemap", path);
+
+		entry = *e;
+	}
+
+	if(entry->type != FILE_TYPE_COMPRESSED_REL)
+		pg_fatal("unexpected type of compressed relation file \"%s\"", path);
+
+	/* fill compressed relation address for blocks in pagemap */
+	iter = datapagemap_iterate(&entry->pagemap);
+	while (datapagemap_next(iter, &blkno))
+	{
+		pcAddr = GetPageCompressAddr(pcMap, entry->chunk_size, blkno);
+		compressedpagemap = pg_malloc(SizeOfCompressedPageMapHeaderData + sizeof(pc_chunk_number_t) * pcAddr->nchunks);
+		compressedpagemap->blkno = blkno;
+		compressedpagemap->next = NULL;
+		compressedpagemap->nchunks = pcAddr->nchunks;
+
+		/* if number of chunks of this block changed while reading compressed relation address file,
+		   use the smaller one. */
+		for(i = 0; i< compressedpagemap->nchunks; i++)
+		{
+			if(compressedpagemap->chunknos[i] == 0)
+			{
+				compressedpagemap->nchunks = i;
+				break;
+			}
+		}
+
+		if(compressedpagemap->nchunks > 0)
+			memcpy(compressedpagemap->chunknos, pcAddr->chunknos, sizeof(pc_chunk_number_t) * compressedpagemap->nchunks);
+
+		if(entry->first_compressedpagemap == NULL)
+		{
+			entry->first_compressedpagemap = compressedpagemap;
+			entry->last_compressedpagemap = compressedpagemap;
+		}
+		else
+		{
+			entry->last_compressedpagemap->next = compressedpagemap;
+			entry->last_compressedpagemap = compressedpagemap;
+		}
+
+		if(min_allocated_chunks == 0 || pcAddr->allocated_chunks < min_allocated_chunks)
+			min_allocated_chunks = pcAddr->allocated_chunks;
+	}
+	pg_free(iter);
+
+	/* fill compressed relation address for blocks in tail of source file */
+	if(entry->action == FILE_ACTION_COPY_TAIL)
+	{
+		for(blkno = (BlockNumber)entry->oldblocks; blkno < (BlockNumber)entry->newblocks; blkno++)
+		{
+			pcAddr = GetPageCompressAddr(pcMap, entry->chunk_size, blkno);
+			compressedpagemap = pg_malloc(SizeOfCompressedPageMapHeaderData + sizeof(pc_chunk_number_t) * pcAddr->nchunks);
+			compressedpagemap->blkno = blkno;
+			compressedpagemap->next = NULL;
+			compressedpagemap->nchunks = pcAddr->nchunks;
+
+			/* if number of chunks of this block changed while reading compressed relation address file,
+			use the smaller one. */
+			for(i = 0; i< compressedpagemap->nchunks; i++)
+			{
+				if(compressedpagemap->chunknos[i] == 0)
+				{
+					compressedpagemap->nchunks = i;
+					break;
+				}
+			}
+
+			if(compressedpagemap->nchunks > 0)
+				memcpy(compressedpagemap->chunknos, pcAddr->chunknos, sizeof(pc_chunk_number_t) * compressedpagemap->nchunks);
+
+			if(entry->first_compressedpagemap == NULL)
+			{
+				entry->first_compressedpagemap = compressedpagemap;
+				entry->last_compressedpagemap = compressedpagemap;
+			}
+			else
+			{
+				entry->last_compressedpagemap->next = compressedpagemap;
+				entry->last_compressedpagemap = compressedpagemap;
+			}
+
+			if(min_allocated_chunks == 0 || pcAddr->allocated_chunks < min_allocated_chunks)
+				min_allocated_chunks = pcAddr->allocated_chunks;
+		}
+	}
+
+	/* we can not get prealloc_chunks guc of this relation, instead use the min allocated_chunks of source */
+	entry->prealloc_chunks = min_allocated_chunks;
 }

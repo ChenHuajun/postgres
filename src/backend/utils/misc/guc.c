@@ -80,6 +80,7 @@
 #include "storage/fd.h"
 #include "storage/large_object.h"
 #include "storage/pg_shmem.h"
+#include "storage/page_compression.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/standby.h"
@@ -759,6 +760,8 @@ const char *const config_group_names[] =
 	gettext_noop("Client Connection Defaults / Other Defaults"),
 	/* LOCK_MANAGEMENT */
 	gettext_noop("Lock Management"),
+	/* COMPRESS_OPTIONS */
+	gettext_noop("Page Compression"),
 	/* COMPAT_OPTIONS */
 	gettext_noop("Version and Platform Compatibility"),
 	/* COMPAT_OPTIONS_PREVIOUS */
@@ -3397,6 +3400,15 @@ static struct config_int ConfigureNamesInt[] =
 		&huge_page_size,
 		0, 0, INT_MAX,
 		check_huge_page_size, NULL, NULL
+	},
+
+		{"compress_address_flush_chunks", PGC_SIGHUP, COMPRESS_OPTIONS,
+			gettext_noop("Set the maximum number of chunks allocated between two flush compressed address files."),
+			NULL
+		},
+		&compress_address_flush_chunks,
+		5000, 0, INT_MAX,
+		NULL, NULL, NULL
 	},
 
 	/* End-of-list marker */

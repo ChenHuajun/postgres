@@ -18,27 +18,32 @@
 #include "access/xlogdefs.h"
 
 #include "filemap.h"
+#include "storage/page_compression.h"
 
 /*
  * Common interface. Calls the copy or libpq method depending on global
  * config options.
  */
 extern void fetchSourceFileList(void);
+extern void fetchCompressedRelationAddress(void);
 extern char *fetchFile(const char *filename, size_t *filesize);
 extern void executeFileMap(void);
 
 /* in libpq_fetch.c */
 extern void libpqProcessFileList(void);
 extern char *libpqGetFile(const char *filename, size_t *filesize);
+extern void libpq_fetchCompressedRelationAddress(filemap_t *map);
 extern void libpq_executeFileMap(filemap_t *map);
 
 extern void libpqConnect(const char *connstr);
 extern XLogRecPtr libpqGetCurrentXlogInsertLocation(void);
 
 /* in copy_fetch.c */
+extern void local_fetchCompressedRelationAddress(filemap_t *map);
 extern void copy_executeFileMap(filemap_t *map);
 
-typedef void (*process_file_callback_t) (const char *path, file_type_t type, size_t size, const char *link_target);
+typedef void (*process_file_callback_t) (const char *path, file_type_t type, size_t size, const char *link_target,
+                                         const PageCompressHeader *pchdr);
 extern void traverse_datadir(const char *datadir, process_file_callback_t callback);
 
 #endif							/* FETCH_H */

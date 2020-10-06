@@ -11,6 +11,7 @@
 #include "datapagemap.h"
 #include "storage/block.h"
 #include "storage/relfilenode.h"
+#include "storage/page_compression.h"
 
 /*
  * For every file found in the local or remote system, we have a file entry
@@ -35,8 +36,19 @@ typedef enum
 {
 	FILE_TYPE_REGULAR,
 	FILE_TYPE_DIRECTORY,
-	FILE_TYPE_SYMLINK
+	FILE_TYPE_SYMLINK,
+	FILE_TYPE_COMPRESSED_REL
 } file_type_t;
+
+typedef struct compressedpagemap_t
+{
+	struct compressedpagemap_t	*next;
+	BlockNumber			blkno;
+	uint8				nchunks;
+	pc_chunk_number_t	chunknos[FLEXIBLE_ARRAY_MEMBER];
+}compressedpagemap_t;
+
+#define SizeOfCompressedPageMapHeaderData offsetof(compressedpagemap_t, chunknos)
 
 typedef struct file_entry_t
 {
@@ -49,6 +61,21 @@ typedef struct file_entry_t
 	size_t		oldsize;
 	size_t		newsize;
 	bool		isrelfile;		/* is it a relation data file? */
+
+	/* for a compressed relation file */
+	struct file_entry_t *pca;
+	struct file_entry_t *pcd;
+	uint32		oldblocks;
+	uint32		newblocks;
+	uint16		chunk_size;
+	uint8		prealloc_chunks;
+	/* compressedpagemap is a link ordered by blkno */
+	compressedpagemap_t *first_compressedpagemap;
+	compressedpagemap_t *last_compressedpagemap;
+
+	/* for a compressed relation address file */
+	PageCompressHeader	*source_pchdr;
+	PageCompressHeader	*target_pchdr;
 
 	datapagemap_t pagemap;
 
@@ -94,11 +121,15 @@ extern void print_filemap(void);
 
 /* Functions for populating the filemap */
 extern void process_source_file(const char *path, file_type_t type,
-								size_t newsize, const char *link_target);
+								size_t newsize, const char *link_target,
+								const PageCompressHeader *pchdr);
 extern void process_target_file(const char *path, file_type_t type,
-								size_t newsize, const char *link_target);
+								size_t newsize, const char *link_target,
+								const PageCompressHeader *pchdr);
+extern void process_compressed_relation(void);
 extern void process_block_change(ForkNumber forknum, RelFileNode rnode,
 								 BlockNumber blkno);
+extern void fill_compressed_relation_address(file_entry_t *entry, const char *path, PageCompressHeader *pcMap);
 extern void filemap_finalize(void);
 
 #endif							/* FILEMAP_H */

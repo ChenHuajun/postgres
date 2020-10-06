@@ -59,6 +59,10 @@ typedef struct RelFileNode
 	Oid			spcNode;		/* tablespace */
 	Oid			dbNode;			/* database */
 	Oid			relNode;		/* relation */
+	uint32		compress_chunk_size;		/* chunk size of compressed data */
+	uint8		compress_algorithm;			/* compress algorithm */
+	int8		compress_level;				/* compress level */
+	uint8		compress_prealloc_chunks;	/* prealloced chunks to store compressed data */
 } RelFileNode;
 
 /*

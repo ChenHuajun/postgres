@@ -97,6 +97,7 @@
 #include "storage/ipc.h"
 #include "utils/guc.h"
 #include "utils/resowner_private.h"
+#include "storage/page_compression.h"
 
 /* Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data */
 #if defined(HAVE_SYNC_FILE_RANGE)
@@ -196,6 +197,8 @@ typedef struct vfd
 	/* NB: fileName is malloc'd, and must be free'd when closing the VFD */
 	int			fileFlags;		/* open(2) flags for (re)opening the file */
 	mode_t		fileMode;		/* mode to pass to open(2) */
+	bool		with_pcmap;		/* is page compression relation */
+	PageCompressHeader	*pcmap;	/* memory map of page compression address file */
 } Vfd;
 
 /*
@@ -1157,6 +1160,17 @@ LruDelete(File file)
 
 	vfdP = &VfdCache[file];
 
+	if (vfdP->with_pcmap && vfdP->pcmap != NULL)
+	{
+		if (pc_munmap(vfdP->pcmap) != 0)
+			ereport(vfdP->fdstate & FD_TEMP_FILE_LIMIT ? LOG : data_sync_elevel(LOG),
+					(errcode_for_file_access(),
+						errmsg("could not munmap file \"%s\": %m",
+							vfdP->fileName)));
+
+		vfdP->pcmap = NULL;
+	}
+
 	/*
 	 * Close the file.  We aren't expecting this to fail; if it does, better
 	 * to leak the FD than to mess up our internal state.
@@ -1836,6 +1850,18 @@ FileClose(File file)
 
 	if (!FileIsNotOpen(file))
 	{
+		/* close the pcmap */
+		if (vfdP->with_pcmap && vfdP->pcmap != NULL)
+		{
+			if (pc_munmap(vfdP->pcmap))
+				ereport(vfdP->fdstate & FD_TEMP_FILE_LIMIT ? LOG : data_sync_elevel(LOG),
+						(errcode_for_file_access(),
+							errmsg("could not munmap file \"%s\": %m",
+								vfdP->fileName)));
+
+			vfdP->pcmap = NULL;
+		}
+
 		/* close the file */
 		if (close(vfdP->fd) != 0)
 		{
@@ -2188,6 +2214,96 @@ FileTruncate(File file, off_t offset, uint32 wait_event_info)
 	}
 
 	return returnCode;
+}
+
+/*
+ * initialize page compress memory map.
+ *
+ */
+void
+SetupPageCompressMemoryMap(File file, int chunk_size, uint8 algorithm)
+{
+	int			returnCode;
+	Vfd		   *vfdP;
+	PageCompressHeader *map;
+
+	Assert(FileIsValid(file));
+
+	vfdP = &VfdCache[file];
+
+	returnCode = FileAccess(file);
+	if (returnCode < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				 errmsg("Failed to open file %s: %m",
+						 vfdP->fileName)));
+
+	map = pc_mmap(vfdP->fd, chunk_size, false);
+	if(map == MAP_FAILED)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+					errmsg("Failed to mmap page compression address file %s: %m",
+							vfdP->fileName)));
+
+	/* initialize page compress header */
+	if(map->chunk_size == 0 && map->algorithm == 0)
+	{
+		map->chunk_size = chunk_size;
+		map->algorithm = algorithm;
+
+		if(pc_msync(map) != 0)
+			ereport(data_sync_elevel(ERROR),
+					(errcode_for_file_access(),
+						errmsg("could not msync file \"%s\": %m",
+							vfdP->fileName)));
+	}
+
+	if(InRecovery)
+	{
+		check_and_repair_compress_address(map, chunk_size, algorithm, vfdP->fileName);
+	}
+
+	vfdP->with_pcmap=true;
+	vfdP->pcmap = map;
+}
+
+/*
+ * Return the page compress memory map.
+ *
+ */
+void *
+GetPageCompressMemoryMap(File file, int chunk_size)
+{
+	int			returnCode;
+	Vfd		   *vfdP;
+	PageCompressHeader *map;
+
+	Assert(FileIsValid(file));
+
+	vfdP = &VfdCache[file];
+
+	returnCode = FileAccess(file);
+	if (returnCode < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				 errmsg("Failed to open file %s: %m",
+						 vfdP->fileName)));
+
+	Assert(vfdP->with_pcmap);
+
+	if(vfdP->pcmap == NULL)
+	{
+		map = pc_mmap(vfdP->fd, chunk_size, false);
+		if(map == MAP_FAILED)
+			ereport(ERROR,
+					(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+					 errmsg("Failed to mmap page compression address file %s: %m",
+							 vfdP->fileName)));
+
+		vfdP->pcmap = map;
+	}
+
+	return vfdP->pcmap;
 }
 
 /*

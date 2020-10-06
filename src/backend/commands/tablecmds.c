@@ -19,6 +19,7 @@
 #include "access/heapam.h"
 #include "access/heapam_xlog.h"
 #include "access/multixact.h"
+#include "access/nbtree.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
 #include "access/sysattr.h"
@@ -83,6 +84,7 @@
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/lock.h"
+#include "storage/page_compression.h"
 #include "storage/predicate.h"
 #include "storage/smgr.h"
 #include "tcop/utility.h"
@@ -96,6 +98,7 @@
 #include "utils/relcache.h"
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
+#include "utils/spccache.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
@@ -604,6 +607,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	LOCKMODE	parentLockmode;
 	const char *accessMethod = NULL;
 	Oid			accessMethodId = InvalidOid;
+	Datum		defaultReloptions = (Datum) 0;
 
 	/*
 	 * Truncate relname to appropriate length (probably a waste of time, as
@@ -744,9 +748,24 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		ownerId = GetUserId();
 
 	/*
+	 * Get default compression options from tablespace.
+	 */
+	if(relkind == RELKIND_RELATION && stmt->relation->relpersistence == RELPERSISTENCE_PERMANENT)
+	{
+		if(stmt->accessMethod == NULL || strcmp(stmt->accessMethod, "heap") == 0)
+		{
+			PageCompressOpts * pcOpt = 
+				get_tablespace_compression_option(tablespaceId ? tablespaceId : MyDatabaseTableSpace);
+
+			if(pcOpt)
+				defaultReloptions = buildCompressReloptions(pcOpt);
+		}
+	}
+
+	/*
 	 * Parse and validate reloptions, if any.
 	 */
-	reloptions = transformRelOptions((Datum) 0, stmt->options, NULL, validnsps,
+	reloptions = transformRelOptions(defaultReloptions, stmt->options, NULL, validnsps,
 									 true, false);
 
 	switch (relkind)
@@ -12927,6 +12946,8 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 	Datum		repl_val[Natts_pg_class];
 	bool		repl_null[Natts_pg_class];
 	bool		repl_repl[Natts_pg_class];
+	bytea		*byteaOpts;
+	PageCompressOpts *newPcOpts = NULL;
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 
 	if (defList == NIL && operation != AT_ReplaceRelOptions)
@@ -12967,17 +12988,33 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 		case RELKIND_RELATION:
 		case RELKIND_TOASTVALUE:
 		case RELKIND_MATVIEW:
-			(void) heap_reloptions(rel->rd_rel->relkind, newOptions, true);
+			byteaOpts = heap_reloptions(rel->rd_rel->relkind, newOptions, true);
+			if(byteaOpts)
+				newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
 			break;
 		case RELKIND_PARTITIONED_TABLE:
-			(void) partitioned_table_reloptions(newOptions, true);
+			byteaOpts = partitioned_table_reloptions(newOptions, true);
+			if(byteaOpts)
+				newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
 			break;
 		case RELKIND_VIEW:
 			(void) view_reloptions(newOptions, true);
 			break;
 		case RELKIND_INDEX:
 		case RELKIND_PARTITIONED_INDEX:
-			(void) index_reloptions(rel->rd_indam->amoptions, newOptions, true);
+			byteaOpts = index_reloptions(rel->rd_indam->amoptions, newOptions, true);
+			if(byteaOpts)
+			{
+				switch(rel->rd_rel->relam)
+				{
+					case BTREE_AM_OID:
+						newPcOpts = &((BTOptions *)byteaOpts)->compress;
+						break;
+
+					default:
+						break;
+				}
+			}
 			break;
 		default:
 			ereport(ERROR,
@@ -13018,6 +13055,26 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 						 errmsg("WITH CHECK OPTION is supported only on automatically updatable views"),
 						 errhint("%s", _(view_updatable_error))));
 		}
+	}
+
+	/* check if changed page compression store format */
+	if(newPcOpts != NULL)
+	{
+		if(newPcOpts->compress_type != rel->rd_node.compress_algorithm)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("change compress_type OPTION is not support")));
+
+		if(rel->rd_node.compress_algorithm != COMPRESS_TYPE_NONE &&
+			newPcOpts->compress_chunk_size != rel->rd_node.compress_chunk_size)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("change compress_chunk_size OPTION is not support")));
+	}else{
+		if(rel->rd_node.compress_algorithm != COMPRESS_TYPE_NONE)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("change compress_type OPTION is not support")));
 	}
 
 	/*

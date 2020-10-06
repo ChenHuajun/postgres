@@ -923,6 +923,7 @@ index_create(Relation heapRelation,
 								relpersistence,
 								shared_relation,
 								mapped_relation,
+								reloptions,
 								allow_system_table_mods,
 								&relfrozenxid,
 								&relminmxid);

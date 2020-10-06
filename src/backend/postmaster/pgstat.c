@@ -4163,6 +4163,10 @@ pgstat_get_wait_io(WaitEventIO w)
 			break;
 		case WAIT_EVENT_WAL_WRITE:
 			event_name = "WALWrite";
+		case WAIT_EVENT_COMPRESS_ADDRESS_FILE_FLUSH:
+			event_name = "CompressAddressFileFlush";
+		case WAIT_EVENT_COMPRESS_ADDRESS_FILE_SYNC:
+			event_name = "CompressAddressFileSync";
 			break;
 		case WAIT_EVENT_LOGICAL_CHANGES_READ:
 			event_name = "LogicalChangesRead";

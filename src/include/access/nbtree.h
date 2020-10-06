@@ -23,6 +23,7 @@
 #include "lib/stringinfo.h"
 #include "storage/bufmgr.h"
 #include "storage/shm_toc.h"
+#include "utils/rel.h"
 
 /* There's room for a 16-bit vacuum cycle ID in BTPageOpaqueData */
 typedef uint16 BTCycleId;
@@ -963,6 +964,7 @@ typedef struct BTOptions
 	/* fraction of newly inserted tuples prior to trigger index cleanup */
 	float8		vacuum_cleanup_index_scale_factor;
 	bool		deduplicate_items;	/* Try to deduplicate items? */
+	PageCompressOpts	compress; /* page compress related options */
 } BTOptions;
 
 #define BTGetFillFactor(relation) \

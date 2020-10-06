@@ -3402,6 +3402,7 @@ static struct config_int ConfigureNamesInt[] =
 		check_huge_page_size, NULL, NULL
 	},
 
+	{
 		{"compress_address_flush_chunks", PGC_SIGHUP, COMPRESS_OPTIONS,
 			gettext_noop("Set the maximum number of chunks allocated between two flush compressed address files."),
 			NULL

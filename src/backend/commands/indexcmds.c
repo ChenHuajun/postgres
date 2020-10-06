@@ -849,7 +849,7 @@ DefineIndex(Oid relationId,
 	/*
 	 * Get default compression options from tablespace.
 	 */
-	if(stmt->relation->relpersistence == RELPERSISTENCE_PERMANENT)
+	if(rel->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT)
 	{
 		if(accessMethodId == BTREE_AM_OID ||
 		   accessMethodId == GIN_AM_OID)

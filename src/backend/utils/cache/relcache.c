@@ -30,6 +30,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "access/hash.h"
+#include "access/gin_private.h"
+#include "access/gist_private.h"
+#include "access/spgist_private.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/nbtree.h"
@@ -1351,6 +1355,22 @@ RelationInitPhysicalAddr(Relation relation)
 
 			case BTREE_AM_OID:
 				SetupPageCompressForRelation(relation, &((BTOptions *)(relation->rd_options))->compress);
+				break;
+
+			case HASH_AM_OID:
+				SetupPageCompressForRelation(relation, &((HashOptions *)(relation->rd_options))->compress);
+				break;
+
+			case GIN_AM_OID:
+				SetupPageCompressForRelation(relation, &((GinOptions *)(relation->rd_options))->compress);
+				break;
+
+			case GIST_AM_OID:
+				SetupPageCompressForRelation(relation, &((GiSTOptions *)(relation->rd_options))->compress);
+				break;
+
+			case SPGIST_AM_OID:
+				SetupPageCompressForRelation(relation, &((SpGistOptions *)(relation->rd_options))->compress);
 				break;
 
 			default:
@@ -3550,8 +3570,9 @@ RelationBuildLocalRelation(const char *relname,
 
 	/* setup page compress option */
 	if (reloptions &&
-		(relkind == RELKIND_RELATION || 
-			relkind == RELKIND_INDEX))
+		(relkind == RELKIND_RELATION ||
+		 relkind == RELKIND_MATVIEW ||
+		 relkind == RELKIND_INDEX))
 		{
 			StdRdOptions *options = (StdRdOptions *)default_reloptions(reloptions, false, RELOPT_KIND_HEAP);
 			SetupPageCompressForRelation(rel, &options->compress);

@@ -611,7 +611,15 @@ ginoptions(Datum reloptions, bool validate)
 	static const relopt_parse_elt tab[] = {
 		{"fastupdate", RELOPT_TYPE_BOOL, offsetof(GinOptions, useFastUpdate)},
 		{"gin_pending_list_limit", RELOPT_TYPE_INT, offsetof(GinOptions,
-															 pendingListCleanupSize)}
+															 pendingListCleanupSize)},
+		{"compress_type", RELOPT_TYPE_ENUM,
+		offsetof(GinOptions, compress) + offsetof(PageCompressOpts, compress_type)},
+		{"compress_level", RELOPT_TYPE_INT,
+		offsetof(GinOptions, compress) + offsetof(PageCompressOpts, compress_level)},
+		{"compress_chunk_size", RELOPT_TYPE_INT,
+		offsetof(GinOptions, compress) + offsetof(PageCompressOpts, compress_chunk_size)},
+		{"compress_prealloc_chunks", RELOPT_TYPE_INT,
+		offsetof(GinOptions, compress) + offsetof(PageCompressOpts, compress_prealloc_chunks)}
 	};
 
 	return (bytea *) build_reloptions(reloptions, validate,

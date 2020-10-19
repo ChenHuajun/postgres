@@ -14,14 +14,20 @@
  */
 #include "postgres.h"
 
+
+
 #include "access/attmap.h"
 #include "access/genam.h"
+#include "access/gin_private.h"
+#include "access/gist_private.h"
+#include "access/hash.h"
 #include "access/heapam.h"
 #include "access/heapam_xlog.h"
 #include "access/multixact.h"
 #include "access/nbtree.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
+#include "access/spgist_private.h"
 #include "access/sysattr.h"
 #include "access/tableam.h"
 #include "access/xact.h"
@@ -12993,9 +12999,7 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 				newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
 			break;
 		case RELKIND_PARTITIONED_TABLE:
-			byteaOpts = partitioned_table_reloptions(newOptions, true);
-			if(byteaOpts)
-				newPcOpts = &((StdRdOptions *)byteaOpts)->compress;
+			(void) partitioned_table_reloptions(newOptions, true);
 			break;
 		case RELKIND_VIEW:
 			(void) view_reloptions(newOptions, true);
@@ -13009,6 +13013,22 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 				{
 					case BTREE_AM_OID:
 						newPcOpts = &((BTOptions *)byteaOpts)->compress;
+						break;
+
+					case HASH_AM_OID:
+						newPcOpts = &((HashOptions *)byteaOpts)->compress;
+						break;
+
+					case GIN_AM_OID:
+						newPcOpts = &((GinOptions *)byteaOpts)->compress;
+						break;
+
+					case GIST_AM_OID:
+						newPcOpts = &((GiSTOptions *)byteaOpts)->compress;
+						break;
+
+					case SPGIST_AM_OID:
+						newPcOpts = &((SpGistOptions *)byteaOpts)->compress;
 						break;
 
 					default:
@@ -13063,18 +13083,18 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 		if(newPcOpts->compress_type != rel->rd_node.compress_algorithm)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("change compress_type OPTION is not support")));
+						errmsg("change compress_type OPTION is not supported")));
 
 		if(rel->rd_node.compress_algorithm != COMPRESS_TYPE_NONE &&
 			newPcOpts->compress_chunk_size != rel->rd_node.compress_chunk_size)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("change compress_chunk_size OPTION is not support")));
+						errmsg("change compress_chunk_size OPTION is not supported")));
 	}else{
 		if(rel->rd_node.compress_algorithm != COMPRESS_TYPE_NONE)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("change compress_type OPTION is not support")));
+						errmsg("change compress_type OPTION is not supported")));
 	}
 
 	/*

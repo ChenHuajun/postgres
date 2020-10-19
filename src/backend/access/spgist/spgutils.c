@@ -593,6 +593,14 @@ spgoptions(Datum reloptions, bool validate)
 {
 	static const relopt_parse_elt tab[] = {
 		{"fillfactor", RELOPT_TYPE_INT, offsetof(SpGistOptions, fillfactor)},
+		{"compress_type", RELOPT_TYPE_ENUM,
+		offsetof(SpGistOptions, compress) + offsetof(PageCompressOpts, compress_type)},
+		{"compress_level", RELOPT_TYPE_INT,
+		offsetof(SpGistOptions, compress) + offsetof(PageCompressOpts, compress_level)},
+		{"compress_chunk_size", RELOPT_TYPE_INT,
+		offsetof(SpGistOptions, compress) + offsetof(PageCompressOpts, compress_chunk_size)},
+		{"compress_prealloc_chunks", RELOPT_TYPE_INT,
+		offsetof(SpGistOptions, compress) + offsetof(PageCompressOpts, compress_prealloc_chunks)}
 	};
 
 	return (bytea *) build_reloptions(reloptions, validate,

@@ -852,7 +852,10 @@ DefineIndex(Oid relationId,
 	if(rel->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT)
 	{
 		if(accessMethodId == BTREE_AM_OID ||
-		   accessMethodId == GIN_AM_OID)
+		   accessMethodId == HASH_AM_OID ||
+		   accessMethodId == GIN_AM_OID ||
+		   accessMethodId == GIST_AM_OID ||
+		   accessMethodId == SPGIST_AM_OID)
 		{
 			PageCompressOpts * pcOpt = 
 				get_tablespace_compression_option(tablespaceId ? tablespaceId : MyDatabaseTableSpace);

@@ -1,0 +1,1291 @@
+--
+-- Page compression tests
+--
+--
+-- create compressed table
+--
+CREATE TABLE tbl_pc(id int, c1 text) WITH(compress_type=pglz);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Options: compress_type=pglz
+
+DROP TABLE tbl_pc;
+CREATE TABLE tbl_pc(id int, c1 text) WITH(compress_type=pglz, compress_chunk_size=1024);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Options: compress_type=pglz, compress_chunk_size=1024
+
+DROP TABLE tbl_pc;
+CREATE TABLE tbl_pc(id int, c1 text) WITH(compress_type=pglz, compress_chunk_size=2048);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Options: compress_type=pglz, compress_chunk_size=2048
+
+DROP TABLE tbl_pc;
+CREATE TABLE tbl_pc(id int, c1 text) WITH(compress_type=pglz, compress_level=0, compress_chunk_size=4096, compress_prealloc_chunks=0);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Options: compress_type=pglz, compress_level=0, compress_chunk_size=4096, compress_prealloc_chunks=0
+
+DROP TABLE tbl_pc;
+CREATE TABLE tbl_pc(id int PRIMARY KEY, c1 text) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id)
+Options: compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+DROP TABLE tbl_pc;
+CREATE TABLE tbl_pc(id int PRIMARY KEY, c1 text) WITH(compress_type=pglz, compress_level=-1, compress_chunk_size=1024, compress_prealloc_chunks=7);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id)
+Options: compress_type=pglz, compress_level=-1, compress_chunk_size=1024, compress_prealloc_chunks=7
+
+DROP TABLE tbl_pc;
+CREATE TABLE tbl_pc WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=7)
+  AS SELECT id, id::text c1 FROM generate_series(1,1000)id;
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Options: compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=7
+
+DROP TABLE tbl_pc;
+CREATE TABLE tbl_pc(id int PRIMARY KEY WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2), c1 text) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+CREATE TABLE tbl_pc2(LIKE tbl_pc INCLUDING ALL);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id) WITH (compress_type=pglz, compress_level='1', compress_chunk_size='1024', compress_prealloc_chunks='2')
+Options: compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+DROP TABLE tbl_pc;
+DROP TABLE tbl_pc2;
+CREATE TABLE tbl_pc(id int PRIMARY KEY, c1 text) WITH(compress_type=none);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id)
+Options: compress_type=none
+
+DROP TABLE tbl_pc;
+-- invalid storage parameter
+CREATE TABLE tbl_pc_error(id int, c1 text) WITH(compress_type=xyz); -- fail
+ERROR:  invalid value for enum option "compress_type": xyz
+DETAIL:  Valid values are "none", "pglz"  and "zstd".
+CREATE TABLE tbl_pc_error(id int, c1 text) WITH(compress_type=pglz, compress_level=xyz); -- fail
+ERROR:  invalid value for integer option "compress_level": xyz
+CREATE TABLE tbl_pc_error(id int, c1 text) WITH(compress_type=pglz, compress_chunk_size=1025); -- fail
+ERROR:  invalid compress_chunk_size 1025 , must be one of 1024, 2048 or 4096 for tbl_pc_error
+CREATE TABLE tbl_pc_error(id int, c1 text) WITH(compress_type=pglz, compress_prealloc_chunks=8); -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+--
+-- create compressed index
+--
+SET enable_seqscan = OFF;
+CREATE TABLE tbl_pc(id int PRIMARY KEY WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2), c1 text) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+CREATE INDEX tbl_pc_idx1 on tbl_pc(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id) WITH (compress_type=pglz, compress_level='1', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx1" btree (c1) WITH (compress_type=pglz, compress_level='1', compress_chunk_size='1024', compress_prealloc_chunks='2')
+Options: compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+INSERT INTO tbl_pc SELECT id, id::text FROM generate_series(1,1000)id;
+-- call CHECKPOINT to flush shared buffer to compressed relation file 
+CHECKPOINT;
+-- run ANALYZE REINDEX VACUUM and CLUSTER on compressed table and index
+ANALYZE tbl_pc;
+SELECT count(*) FROM tbl_pc;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+EXPLAIN(COSTS off) SELECT * FROM tbl_pc WHERE c1='100';
+               QUERY PLAN               
+----------------------------------------
+ Index Scan using tbl_pc_idx1 on tbl_pc
+   Index Cond: (c1 = '100'::text)
+(2 rows)
+
+REINDEX INDEX tbl_pc_idx1;
+CHECKPOINT;
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+REINDEX TABLE tbl_pc;
+CHECKPOINT;
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+VACUUM tbl_pc;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+VACUUM FULL tbl_pc;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+CLUSTER tbl_pc USING tbl_pc_idx1;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+DROP INDEX tbl_pc_idx1;
+-- check usage of compressed index with data
+CREATE INDEX tbl_pc_idx1 on tbl_pc USING hash(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+CHECKPOINT;
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+EXPLAIN(COSTS off) SELECT * FROM tbl_pc WHERE c1='100';
+               QUERY PLAN               
+----------------------------------------
+ Index Scan using tbl_pc_idx1 on tbl_pc
+   Index Cond: (c1 = '100'::text)
+(2 rows)
+
+DROP INDEX tbl_pc_idx1;
+CREATE INDEX tbl_pc_idx1 on tbl_pc USING gin((ARRAY[id])) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+CHECKPOINT;
+SELECT * FROM tbl_pc WHERE ARRAY[id] @> ARRAY[100];
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+EXPLAIN(COSTS off) SELECT * FROM tbl_pc WHERE ARRAY[id] @> ARRAY[100];
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Bitmap Heap Scan on tbl_pc
+   Recheck Cond: (ARRAY[id] @> '{100}'::integer[])
+   ->  Bitmap Index Scan on tbl_pc_idx1
+         Index Cond: (ARRAY[id] @> '{100}'::integer[])
+(4 rows)
+
+DROP INDEX tbl_pc_idx1;
+CREATE INDEX tbl_pc_idx1 on tbl_pc USING gist((point(id,id))) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+CHECKPOINT;
+SELECT * FROM tbl_pc ORDER BY point(id,id) <-> point(100,100) limit 1;
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+EXPLAIN(COSTS off) SELECT * FROM tbl_pc ORDER BY point(id,id) <-> point(100,100) limit 1;
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Limit
+   ->  Index Scan using tbl_pc_idx1 on tbl_pc
+         Order By: (point((id)::double precision, (id)::double precision) <-> '(100,100)'::point)
+(3 rows)
+
+DROP INDEX tbl_pc_idx1;
+CREATE INDEX tbl_pc_idx1 on tbl_pc USING spgist(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+CHECKPOINT;
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+EXPLAIN(COSTS off) SELECT * FROM tbl_pc WHERE c1='100';
+               QUERY PLAN               
+----------------------------------------
+ Index Scan using tbl_pc_idx1 on tbl_pc
+   Index Cond: (c1 = '100'::text)
+(2 rows)
+
+DROP INDEX tbl_pc_idx1;
+-- brin index does not support compression
+CREATE INDEX tbl_pc_idx1 on tbl_pc USING brin(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2); -- fail
+ERROR:  unrecognized parameter "compress_type"
+DROP TABLE tbl_pc;
+--
+-- alter table and index
+--
+-- ALTER TABLE
+-- ALTER compress_type and compress_chunk_size currently is not supported
+CREATE TABLE tbl_pc(id int, c1 text);
+ALTER TABLE tbl_pc SET(compress_type=pglz); -- fail
+ERROR:  change compress_type OPTION is not supported
+DROP TABLE tbl_pc;
+CREATE TABLE tbl_pc(id int PRIMARY KEY, c1 text) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+ALTER TABLE tbl_pc SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER TABLE tbl_pc SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER TABLE tbl_pc SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER TABLE tbl_pc SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id)
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=0
+
+ALTER TABLE tbl_pc RESET(compress_type); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER TABLE tbl_pc RESET(compress_chunk_size); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER TABLE tbl_pc RESET(compress_level); -- ok
+ALTER TABLE tbl_pc RESET(compress_prealloc_chunks); -- ok
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id)
+Options: compress_type=pglz, compress_chunk_size=1024
+
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc;
+ count 
+-------
+     0
+(1 row)
+
+-- ALTER INDEX
+-- ALTER compress_type and compress_chunk_size currently is not supported
+CREATE INDEX tbl_pc_idx1 on tbl_pc USING btree(c1);
+ALTER INDEX tbl_pc_idx1 SET(compress_type=pglz); -- fail
+ERROR:  change compress_type OPTION is not supported
+DROP INDEX tbl_pc_idx1;
+CREATE INDEX tbl_pc_idx1 on tbl_pc USING btree(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+ALTER INDEX tbl_pc_idx1 SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx1 SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx1 SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER INDEX tbl_pc_idx1 SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id)
+    "tbl_pc_idx1" btree (c1) WITH (compress_type=pglz, compress_chunk_size='1024', compress_level='2', compress_prealloc_chunks='0')
+Options: compress_type=pglz, compress_chunk_size=1024
+
+ALTER INDEX tbl_pc_idx1 RESET(compress_type); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx1 RESET(compress_chunk_size); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx1 RESET(compress_level); -- ok
+ALTER INDEX tbl_pc_idx1 RESET(compress_prealloc_chunks); -- ok
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id)
+    "tbl_pc_idx1" btree (c1) WITH (compress_type=pglz, compress_chunk_size='1024')
+Options: compress_type=pglz, compress_chunk_size=1024
+
+CHECKPOINT;
+SELECT * FROM tbl_pc WHERE c1='100';
+ id | c1 
+----+----
+(0 rows)
+
+EXPLAIN(COSTS off) SELECT * FROM tbl_pc WHERE c1='100';
+               QUERY PLAN               
+----------------------------------------
+ Bitmap Heap Scan on tbl_pc
+   Recheck Cond: (c1 = '100'::text)
+   ->  Bitmap Index Scan on tbl_pc_idx1
+         Index Cond: (c1 = '100'::text)
+(4 rows)
+
+-- alter hash index
+CREATE INDEX tbl_pc_idx_hash on tbl_pc USING hash(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+ALTER INDEX tbl_pc_idx_hash SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx_hash SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx_hash SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER INDEX tbl_pc_idx_hash SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ tbl_pc_idx_hash
+                Index "public.tbl_pc_idx_hash"
+ Column |  Type   | Key? | Definition | Storage | Stats target 
+--------+---------+------+------------+---------+--------------
+ c1     | integer | yes  | c1         | plain   | 
+hash, for table "public.tbl_pc"
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=0
+
+ALTER INDEX tbl_pc_idx_hash RESET(compress_type); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx_hash RESET(compress_chunk_size); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx_hash RESET(compress_level); -- ok
+ALTER INDEX tbl_pc_idx_hash RESET(compress_prealloc_chunks); -- ok
+\d+ tbl_pc_idx_hash
+                Index "public.tbl_pc_idx_hash"
+ Column |  Type   | Key? | Definition | Storage | Stats target 
+--------+---------+------+------------+---------+--------------
+ c1     | integer | yes  | c1         | plain   | 
+hash, for table "public.tbl_pc"
+Options: compress_type=pglz, compress_chunk_size=1024
+
+-- alter gin index
+CREATE INDEX tbl_pc_idx_gin on tbl_pc USING gin((ARRAY[id])) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+ALTER INDEX tbl_pc_idx_gin SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx_gin SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx_gin SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER INDEX tbl_pc_idx_gin SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ tbl_pc_idx_gin
+                 Index "public.tbl_pc_idx_gin"
+ Column |  Type   | Key? | Definition  | Storage | Stats target 
+--------+---------+------+-------------+---------+--------------
+ array  | integer | yes  | (ARRAY[id]) | plain   | 
+gin, for table "public.tbl_pc"
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=0
+
+ALTER INDEX tbl_pc_idx_gin RESET(compress_type); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx_gin RESET(compress_chunk_size); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx_gin RESET(compress_level); -- ok
+ALTER INDEX tbl_pc_idx_gin RESET(compress_prealloc_chunks); -- ok
+\d+ tbl_pc_idx_gin
+                 Index "public.tbl_pc_idx_gin"
+ Column |  Type   | Key? | Definition  | Storage | Stats target 
+--------+---------+------+-------------+---------+--------------
+ array  | integer | yes  | (ARRAY[id]) | plain   | 
+gin, for table "public.tbl_pc"
+Options: compress_type=pglz, compress_chunk_size=1024
+
+-- alter gist index
+CREATE INDEX tbl_pc_idx_gist on tbl_pc USING gist((point(id,id))) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+ALTER INDEX tbl_pc_idx_gist SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx_gist SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx_gist SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER INDEX tbl_pc_idx_gist SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ tbl_pc_idx_gist
+                                  Index "public.tbl_pc_idx_gist"
+ Column | Type | Key? |                    Definition                     | Storage | Stats target 
+--------+------+------+---------------------------------------------------+---------+--------------
+ point  | box  | yes  | point(id::double precision, id::double precision) | plain   | 
+gist, for table "public.tbl_pc"
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=0
+
+ALTER INDEX tbl_pc_idx_gist RESET(compress_type); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx_gist RESET(compress_chunk_size); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx_gist RESET(compress_level); -- ok
+ALTER INDEX tbl_pc_idx_gist RESET(compress_prealloc_chunks); -- ok
+\d+ tbl_pc_idx_gist
+                                  Index "public.tbl_pc_idx_gist"
+ Column | Type | Key? |                    Definition                     | Storage | Stats target 
+--------+------+------+---------------------------------------------------+---------+--------------
+ point  | box  | yes  | point(id::double precision, id::double precision) | plain   | 
+gist, for table "public.tbl_pc"
+Options: compress_type=pglz, compress_chunk_size=1024
+
+-- alter spgist index
+CREATE INDEX tbl_pc_idx_spgist on tbl_pc USING spgist(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+ALTER INDEX tbl_pc_idx_spgist SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx_spgist SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx_spgist SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER INDEX tbl_pc_idx_spgist SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ tbl_pc_idx_spgist
+              Index "public.tbl_pc_idx_spgist"
+ Column | Type | Key? | Definition | Storage  | Stats target 
+--------+------+------+------------+----------+--------------
+ c1     | text | yes  | c1         | extended | 
+spgist, for table "public.tbl_pc"
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=0
+
+ALTER INDEX tbl_pc_idx_spgist RESET(compress_type); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX tbl_pc_idx_spgist RESET(compress_chunk_size); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX tbl_pc_idx_spgist RESET(compress_level); -- ok
+ALTER INDEX tbl_pc_idx_spgist RESET(compress_prealloc_chunks); -- ok
+\d+ tbl_pc_idx_spgist
+              Index "public.tbl_pc_idx_spgist"
+ Column | Type | Key? | Definition | Storage  | Stats target 
+--------+------+------+------------+----------+--------------
+ c1     | text | yes  | c1         | extended | 
+spgist, for table "public.tbl_pc"
+Options: compress_type=pglz, compress_chunk_size=1024
+
+-- alter brin index (do not support compression)
+CREATE INDEX tbl_pc_idx_brin on tbl_pc USING brin(c1);
+ALTER INDEX tbl_pc_idx_brin SET(compress_prealloc_chunks=3);  -- fail
+ERROR:  unrecognized parameter "compress_prealloc_chunks"
+DROP TABLE tbl_pc;
+--
+-- partitioned table and index
+--
+-- partition table does not support compression, but index of partition table and its child tables can use compression
+CREATE TABLE tbl_pc_part (id int, c1 text) PARTITION BY RANGE (id) WITH(compress_type=pglz); -- fail
+ERROR:  unrecognized parameter "compress_type"
+CREATE TABLE tbl_pc_part (id int, c1 text) PARTITION BY RANGE (id);
+CREATE TABLE tbl_pc_part_1 PARTITION OF tbl_pc_part FOR VALUES FROM (1) TO (1001);
+CREATE TABLE tbl_pc_part_2 PARTITION OF tbl_pc_part FOR VALUES FROM (1001) TO (2001) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2);
+CREATE INDEX part_id_idx ON tbl_pc_part(id) WITH(compress_type=pglz, compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2);
+CREATE TABLE tbl_pc_part_3 PARTITION OF tbl_pc_part FOR VALUES FROM (2001) TO (3001);
+CREATE INDEX part3_id_idx1 ON tbl_pc_part_3(id) WITH(compress_type=pglz, compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2);
+\d+ tbl_pc_part
+                          Partitioned table "public.tbl_pc_part"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition key: RANGE (id)
+Indexes:
+    "part_id_idx" btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+Partitions: tbl_pc_part_1 FOR VALUES FROM (1) TO (1001),
+            tbl_pc_part_2 FOR VALUES FROM (1001) TO (2001),
+            tbl_pc_part_3 FOR VALUES FROM (2001) TO (3001)
+
+\d+ part_id_idx
+            Partitioned index "public.part_id_idx"
+ Column |  Type   | Key? | Definition | Storage | Stats target 
+--------+---------+------+------------+---------+--------------
+ id     | integer | yes  | id         | plain   | 
+btree, for table "public.tbl_pc_part"
+Partitions: tbl_pc_part_1_id_idx,
+            tbl_pc_part_2_id_idx,
+            tbl_pc_part_3_id_idx
+Options: compress_type=pglz, compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+\d+ tbl_pc_part_1
+                               Table "public.tbl_pc_part_1"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition of: tbl_pc_part FOR VALUES FROM (1) TO (1001)
+Partition constraint: ((id IS NOT NULL) AND (id >= 1) AND (id < 1001))
+Indexes:
+    "tbl_pc_part_1_id_idx" btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+
+\d+ tbl_pc_part_2
+                               Table "public.tbl_pc_part_2"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition of: tbl_pc_part FOR VALUES FROM (1001) TO (2001)
+Partition constraint: ((id IS NOT NULL) AND (id >= 1001) AND (id < 2001))
+Indexes:
+    "tbl_pc_part_2_id_idx" btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+Options: compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+\d+ tbl_pc_part_3
+                               Table "public.tbl_pc_part_3"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition of: tbl_pc_part FOR VALUES FROM (2001) TO (3001)
+Partition constraint: ((id IS NOT NULL) AND (id >= 2001) AND (id < 3001))
+Indexes:
+    "part3_id_idx1" btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_part_3_id_idx" btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+
+INSERT INTO tbl_pc_part SELECT id, id::text FROM generate_series(1,3000)id;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc_part;
+ count 
+-------
+  3000
+(1 row)
+
+SELECT * FROM tbl_pc_part WHERE id=100;
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+SELECT * FROM tbl_pc_part WHERE id=1100;
+  id  |  c1  
+------+------
+ 1100 | 1100
+(1 row)
+
+SELECT * FROM tbl_pc_part WHERE id=2100;
+  id  |  c1  
+------+------
+ 2100 | 2100
+(1 row)
+
+ALTER TABLE tbl_pc_part SET(compress_type=pglz); -- fail
+ERROR:  unrecognized parameter "compress_type"
+ALTER TABLE tbl_pc_part_1 SET(compress_type=pglz); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER TABLE tbl_pc_part_2 SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER TABLE tbl_pc_part_2 SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER TABLE tbl_pc_part_2 SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER TABLE tbl_pc_part_2 SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ tbl_pc_part_2
+                               Table "public.tbl_pc_part_2"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition of: tbl_pc_part FOR VALUES FROM (1001) TO (2001)
+Partition constraint: ((id IS NOT NULL) AND (id >= 1001) AND (id < 2001))
+Indexes:
+    "tbl_pc_part_2_id_idx" btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=0
+
+ALTER INDEX part3_id_idx1 SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX part3_id_idx1 SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX part3_id_idx1 SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER INDEX part3_id_idx1 SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ part3_id_idx1
+                 Index "public.part3_id_idx1"
+ Column |  Type   | Key? | Definition | Storage | Stats target 
+--------+---------+------+------------+---------+--------------
+ id     | integer | yes  | id         | plain   | 
+btree, for table "public.tbl_pc_part_3"
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=0
+
+ALTER INDEX part_id_idx SET(compress_type=pglz); -- fail
+ERROR:  "part_id_idx" is not a table, view, materialized view, or index
+ALTER INDEX part_id_idx SET(compress_chunk_size=2048); -- fail
+ERROR:  "part_id_idx" is not a table, view, materialized view, or index
+ALTER INDEX part_id_idx SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  "part_id_idx" is not a table, view, materialized view, or index
+ALTER INDEX part_id_idx SET(compress_level=2, compress_prealloc_chunks=0); -- fail
+ERROR:  "part_id_idx" is not a table, view, materialized view, or index
+\d+ tbl_pc_part
+                          Partitioned table "public.tbl_pc_part"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition key: RANGE (id)
+Indexes:
+    "part_id_idx" btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+Partitions: tbl_pc_part_1 FOR VALUES FROM (1) TO (1001),
+            tbl_pc_part_2 FOR VALUES FROM (1001) TO (2001),
+            tbl_pc_part_3 FOR VALUES FROM (2001) TO (3001)
+
+INSERT INTO tbl_pc_part SELECT id, id::text FROM generate_series(1,3000)id;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc_part;
+ count 
+-------
+  6000
+(1 row)
+
+SELECT * FROM tbl_pc_part WHERE id=100;
+ id  | c1  
+-----+-----
+ 100 | 100
+ 100 | 100
+(2 rows)
+
+SELECT * FROM tbl_pc_part WHERE id=1100;
+  id  |  c1  
+------+------
+ 1100 | 1100
+ 1100 | 1100
+(2 rows)
+
+SELECT * FROM tbl_pc_part WHERE id=2100;
+  id  |  c1  
+------+------
+ 2100 | 2100
+ 2100 | 2100
+(2 rows)
+
+DROP TABLE tbl_pc_part;
+--
+-- default tablespace store parameter
+--
+-- can not use compression on global tablespace
+ALTER TABLESPACE pg_default SET(default_compress_type=xxx); -- fail
+ERROR:  invalid value for enum option "default_compress_type": xxx
+DETAIL:  Valid values are "none", "pglz"  and "zstd".
+ALTER TABLESPACE pg_default SET(default_compress_chunk_size=1023); -- fail
+ERROR:  value 1023 out of bounds for option "default_compress_chunk_size"
+DETAIL:  Valid values are between "1024" and "4096".
+ALTER TABLESPACE pg_default SET(default_compress_chunk_size=4097); -- fail
+ERROR:  value 4097 out of bounds for option "default_compress_chunk_size"
+DETAIL:  Valid values are between "1024" and "4096".
+ALTER TABLESPACE pg_default SET(default_compress_prealloc_chunks=-1); -- fail
+ERROR:  value -1 out of bounds for option "default_compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER TABLESPACE pg_default SET(default_compress_prealloc_chunks=8); -- fail
+ERROR:  value 8 out of bounds for option "default_compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER TABLESPACE pg_default SET(default_compress_type=pglz, default_compress_level=2, default_compress_chunk_size=1024, default_compress_prealloc_chunks=2);
+ -- ok
+-- table and index(btree,hash,gin,gist,spgist) inherit default compression options from it's tablespace
+CREATE TABLE tbl_pc(id int PRIMARY KEY, c1 text);
+CREATE INDEX tbl_pc_idx_btree on tbl_pc(c1);
+CREATE INDEX tbl_pc_idx_hash on tbl_pc USING hash(c1);
+CREATE INDEX tbl_pc_idx_gin on tbl_pc USING gin((ARRAY[id]));
+CREATE INDEX tbl_pc_idx_gist on tbl_pc USING gist((point(id,id)));
+CREATE INDEX tbl_pc_idx_spgist on tbl_pc USING spgist(c1);
+CREATE INDEX tbl_pc_idx_brin on tbl_pc USING brin(c1);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_brin" brin (c1)
+    "tbl_pc_idx_btree" btree (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_gin" gin ((ARRAY[id])) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_gist" gist (point(id::double precision, id::double precision)) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_hash" hash (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_spgist" spgist (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+Options: compress_type=pglz, compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+SELECT size FROM pg_stat_file(pg_relation_filepath('tbl_pc') || '_pca');
+  size   
+---------
+ 4794000
+(1 row)
+
+SELECT size FROM pg_stat_file(pg_relation_filepath('tbl_pc_idx_btree') || '_pca');
+  size   
+---------
+ 4794000
+(1 row)
+
+SELECT size FROM pg_stat_file(pg_relation_filepath('tbl_pc_idx_hash') || '_pca');
+  size   
+---------
+ 4794000
+(1 row)
+
+SELECT size FROM pg_stat_file(pg_relation_filepath('tbl_pc_idx_gin') || '_pca');
+  size   
+---------
+ 4794000
+(1 row)
+
+SELECT size FROM pg_stat_file(pg_relation_filepath('tbl_pc_idx_gist') || '_pca');
+  size   
+---------
+ 4794000
+(1 row)
+
+SELECT size FROM pg_stat_file(pg_relation_filepath('tbl_pc_idx_spgist') || '_pca');
+  size   
+---------
+ 4794000
+(1 row)
+
+SELECT size FROM pg_stat_file(pg_relation_filepath('tbl_pc_idx_brin') || '_pca', true);
+ size 
+------
+     
+(1 row)
+
+-- toast relation will not be compressed
+SELECT  reltoastrelid FROM pg_class  WHERE oid='tbl_pc'::regclass \gset
+SELECT reloptions FROM pg_class where oid=:reltoastrelid;
+ reloptions 
+------------
+ 
+(1 row)
+
+SELECT size FROM pg_stat_file(pg_relation_filepath(:reltoastrelid) || '_pca', true);
+ size 
+------
+     
+(1 row)
+
+CREATE TABLE tbl_pc1 AS SELECT * FROM tbl_pc;
+\d+ tbl_pc1
+                                  Table "public.tbl_pc1"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Options: compress_type=pglz, compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+ALTER TABLESPACE pg_default RESET(default_compress_type, default_compress_level, default_compress_chunk_size, default_compress_prealloc_chunks);
+CREATE INDEX tbl_pc_idx2 on tbl_pc(c1);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx2" btree (c1)
+    "tbl_pc_idx_brin" brin (c1)
+    "tbl_pc_idx_btree" btree (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_gin" gin ((ARRAY[id])) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_gist" gist (point(id::double precision, id::double precision)) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_hash" hash (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx_spgist" spgist (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+Options: compress_type=pglz, compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+CREATE TABLE tbl_pc2(LIKE tbl_pc);
+\d+ tbl_pc2
+                                  Table "public.tbl_pc2"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+
+CREATE TABLE tbl_pc3(LIKE tbl_pc INCLUDING ALL);
+\d+ tbl_pc3
+                                  Table "public.tbl_pc3"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc3_pkey" PRIMARY KEY, btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc3_array_idx" gin ((ARRAY[id])) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc3_c1_idx" btree (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc3_c1_idx1" hash (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc3_c1_idx2" spgist (c1) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc3_c1_idx3" brin (c1)
+    "tbl_pc3_c1_idx4" btree (c1)
+    "tbl_pc3_point_idx" gist (point(id::double precision, id::double precision)) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+
+CREATE TABLE tbl_pc4 AS SELECT * FROM tbl_pc;
+\d+ tbl_pc4
+                                  Table "public.tbl_pc4"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+
+DROP TABLE tbl_pc;
+DROP TABLE tbl_pc1;
+DROP TABLE tbl_pc2;
+DROP TABLE tbl_pc3;
+DROP TABLE tbl_pc4;
+ALTER TABLESPACE pg_default SET(default_compress_type=pglz, default_compress_level=2, default_compress_chunk_size=1024, default_compress_prealloc_chunks=2);
+CREATE TABLE tbl_pc(id int PRIMARY KEY, c1 text) WITH(compress_type=none);
+CREATE INDEX tbl_pc_idx1 on tbl_pc(c1) WITH(compress_type=none);
+\d+ tbl_pc
+                                   Table "public.tbl_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_pkey" PRIMARY KEY, btree (id) WITH (compress_type=pglz, compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2')
+    "tbl_pc_idx1" btree (c1) WITH (compress_level='2', compress_chunk_size='1024', compress_prealloc_chunks='2', compress_type='none')
+Options: compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2, compress_type=none
+
+INSERT INTO tbl_pc SELECT id, id::text FROM generate_series(1,1000)id;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT * FROM tbl_pc WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+DROP TABLE tbl_pc;
+-- tablespace & partitioned table
+CREATE TABLE tbl_pc_part (id int, c1 text) PARTITION BY RANGE (id);
+CREATE TABLE tbl_pc_part_1 PARTITION OF tbl_pc_part FOR VALUES FROM (1) TO (1001);
+CREATE TABLE tbl_pc_part_2 PARTITION OF tbl_pc_part FOR VALUES FROM (1001) TO (2001) WITH(compress_type=pglz);
+CREATE INDEX part_id_idx ON tbl_pc_part(id) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024);
+CREATE TABLE tbl_pc_part_3 PARTITION OF tbl_pc_part FOR VALUES FROM (2001) TO (3001) WITH(compress_type=none);
+CREATE INDEX part3_id_idx1 ON tbl_pc_part_3(id) WITH(compress_type=pglz, compress_chunk_size=1024, compress_prealloc_chunks=3);
+\d+ tbl_pc_part
+                          Partitioned table "public.tbl_pc_part"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition key: RANGE (id)
+Indexes:
+    "part_id_idx" btree (id) WITH (compress_prealloc_chunks='2', compress_type=pglz, compress_level='1', compress_chunk_size='1024')
+Partitions: tbl_pc_part_1 FOR VALUES FROM (1) TO (1001),
+            tbl_pc_part_2 FOR VALUES FROM (1001) TO (2001),
+            tbl_pc_part_3 FOR VALUES FROM (2001) TO (3001)
+
+\d+ tbl_pc_part_1
+                               Table "public.tbl_pc_part_1"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition of: tbl_pc_part FOR VALUES FROM (1) TO (1001)
+Partition constraint: ((id IS NOT NULL) AND (id >= 1) AND (id < 1001))
+Indexes:
+    "tbl_pc_part_1_id_idx" btree (id) WITH (compress_prealloc_chunks='2', compress_type=pglz, compress_level='1', compress_chunk_size='1024')
+Options: compress_type=pglz, compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2
+
+\d+ tbl_pc_part_2
+                               Table "public.tbl_pc_part_2"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition of: tbl_pc_part FOR VALUES FROM (1001) TO (2001)
+Partition constraint: ((id IS NOT NULL) AND (id >= 1001) AND (id < 2001))
+Indexes:
+    "tbl_pc_part_2_id_idx" btree (id) WITH (compress_prealloc_chunks='2', compress_type=pglz, compress_level='1', compress_chunk_size='1024')
+Options: compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2, compress_type=pglz
+
+\d+ tbl_pc_part_3
+                               Table "public.tbl_pc_part_3"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Partition of: tbl_pc_part FOR VALUES FROM (2001) TO (3001)
+Partition constraint: ((id IS NOT NULL) AND (id >= 2001) AND (id < 3001))
+Indexes:
+    "part3_id_idx1" btree (id) WITH (compress_level='2', compress_type=pglz, compress_chunk_size='1024', compress_prealloc_chunks='3')
+    "tbl_pc_part_3_id_idx" btree (id) WITH (compress_prealloc_chunks='2', compress_type=pglz, compress_level='1', compress_chunk_size='1024')
+Options: compress_level=2, compress_chunk_size=1024, compress_prealloc_chunks=2, compress_type=none
+
+DROP TABLE tbl_pc_part;
+-- tablespace & unlogged relation
+CREATE UNLOGGED TABLE tbl_pc_unlogged(id int PRIMARY KEY, c1 text);
+CREATE INDEX tbl_pc_idx1_unlogged ON tbl_pc_unlogged(c1);
+\d+ tbl_pc_unlogged
+                          Unlogged table "public.tbl_pc_unlogged"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_unlogged_pkey" PRIMARY KEY, btree (id)
+    "tbl_pc_idx1_unlogged" btree (c1)
+
+ALTER TABLE tbl_pc_unlogged SET LOGGED;
+DROP TABLE tbl_pc_unlogged;
+CREATE UNLOGGED TABLE tbl_pc_unlogged(id int PRIMARY KEY, c1 text) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=0);
+CREATE INDEX tbl_pc_idx1_unlogged ON tbl_pc_unlogged(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=1);
+\d+ tbl_pc_unlogged
+                          Unlogged table "public.tbl_pc_unlogged"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_unlogged_pkey" PRIMARY KEY, btree (id)
+    "tbl_pc_idx1_unlogged" btree (c1) WITH (compress_type=pglz, compress_level='1', compress_chunk_size='1024', compress_prealloc_chunks='1')
+Options: compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=0
+
+ALTER TABLE tbl_pc_unlogged SET(compress_level=2, compress_prealloc_chunks=1);
+ALTER INDEX tbl_pc_idx1_unlogged SET(compress_level=2, compress_prealloc_chunks=1);
+\d+ tbl_pc_unlogged
+                          Unlogged table "public.tbl_pc_unlogged"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           | not null |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "tbl_pc_unlogged_pkey" PRIMARY KEY, btree (id)
+    "tbl_pc_idx1_unlogged" btree (c1) WITH (compress_type=pglz, compress_chunk_size='1024', compress_level='2', compress_prealloc_chunks='1')
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=1
+
+INSERT INTO tbl_pc_unlogged SELECT id, id::text FROM generate_series(1,1000)id;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc_unlogged;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT * FROM tbl_pc_unlogged WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+ALTER TABLE tbl_pc_unlogged SET LOGGED;
+INSERT INTO tbl_pc_unlogged SELECT id, id::text FROM generate_series(1001,2000)id;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc_unlogged;
+ count 
+-------
+  2000
+(1 row)
+
+SELECT * FROM tbl_pc_unlogged WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+DROP TABLE tbl_pc_unlogged;
+-- tablespace & temp relation
+CREATE TEMP TABLE tbl_pc_tmp(id int PRIMARY KEY, c1 text);
+CREATE INDEX tbl_pc_idx1_tmp ON tbl_pc_tmp(c1);
+SELECT reloptions FROM pg_class WHERE oid='tbl_pc_tmp'::regclass;
+ reloptions 
+------------
+ 
+(1 row)
+
+SELECT reloptions FROM pg_class WHERE oid='tbl_pc_idx1_tmp'::regclass;
+ reloptions 
+------------
+ 
+(1 row)
+
+DROP TABLE tbl_pc_tmp;
+CREATE TEMP TABLE tbl_pc_tmp(id int PRIMARY KEY, c1 text) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=2048, compress_prealloc_chunks=2);
+CREATE INDEX tbl_pc_idx1_tmp ON tbl_pc_tmp(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=2048, compress_prealloc_chunks=1);
+SELECT reloptions FROM pg_class WHERE oid='tbl_pc_tmp'::regclass;
+                                        reloptions                                         
+-------------------------------------------------------------------------------------------
+ {compress_type=pglz,compress_level=1,compress_chunk_size=2048,compress_prealloc_chunks=2}
+(1 row)
+
+SELECT reloptions FROM pg_class WHERE oid='tbl_pc_idx1_tmp'::regclass;
+                                        reloptions                                         
+-------------------------------------------------------------------------------------------
+ {compress_type=pglz,compress_level=1,compress_chunk_size=2048,compress_prealloc_chunks=1}
+(1 row)
+
+ALTER TABLE tbl_pc_tmp SET(compress_level=2, compress_prealloc_chunks=1);
+ALTER INDEX tbl_pc_idx1_tmp SET(compress_level=2, compress_prealloc_chunks=1);
+SELECT reloptions FROM pg_class WHERE oid='tbl_pc_tmp'::regclass;
+                                        reloptions                                         
+-------------------------------------------------------------------------------------------
+ {compress_type=pglz,compress_chunk_size=2048,compress_level=2,compress_prealloc_chunks=1}
+(1 row)
+
+SELECT reloptions FROM pg_class WHERE oid='tbl_pc_idx1_tmp'::regclass;
+                                        reloptions                                         
+-------------------------------------------------------------------------------------------
+ {compress_type=pglz,compress_chunk_size=2048,compress_level=2,compress_prealloc_chunks=1}
+(1 row)
+
+INSERT INTO tbl_pc_tmp SELECT id, id::text FROM generate_series(1,1000)id;
+CHECKPOINT;
+SELECT count(*) FROM tbl_pc_tmp;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT * FROM tbl_pc_tmp WHERE c1='100';
+ id  | c1  
+-----+-----
+ 100 | 100
+(1 row)
+
+DROP TABLE tbl_pc_tmp;
+-- tablespace & materialized view
+CREATE MATERIALIZED VIEW mv_pc AS SELECT id, id::text c1 FROM generate_series(1,1000)id;
+\d+ mv_pc
+                             Materialized view "public.mv_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+View definition:
+ SELECT id.id,
+    id.id::text AS c1
+   FROM generate_series(1, 1000) id(id);
+
+DROP MATERIALIZED VIEW mv_pc;
+CREATE MATERIALIZED VIEW mv_pc WITH(compress_type=pglz, compress_level=1, compress_chunk_size=2048, compress_prealloc_chunks=1)
+  AS SELECT id, id::text c1 FROM generate_series(1,1000)id;
+CREATE INDEX mv_pc_idx ON mv_pc(c1) WITH(compress_type=pglz, compress_level=1, compress_chunk_size=1024, compress_prealloc_chunks=2); 
+\d+ mv_pc
+                             Materialized view "public.mv_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "mv_pc_idx" btree (c1) WITH (compress_type=pglz, compress_level='1', compress_chunk_size='1024', compress_prealloc_chunks='2')
+View definition:
+ SELECT id.id,
+    id.id::text AS c1
+   FROM generate_series(1, 1000) id(id);
+Options: compress_type=pglz, compress_level=1, compress_chunk_size=2048, compress_prealloc_chunks=1
+
+ALTER MATERIALIZED VIEW mv_pc SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER MATERIALIZED VIEW mv_pc SET(compress_chunk_size=1024); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER MATERIALIZED VIEW mv_pc SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER MATERIALIZED VIEW mv_pc SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ mv_pc
+                             Materialized view "public.mv_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "mv_pc_idx" btree (c1) WITH (compress_type=pglz, compress_level='1', compress_chunk_size='1024', compress_prealloc_chunks='2')
+View definition:
+ SELECT id.id,
+    id.id::text AS c1
+   FROM generate_series(1, 1000) id(id);
+Options: compress_type=pglz, compress_chunk_size=2048, compress_level=2, compress_prealloc_chunks=0
+
+ALTER MATERIALIZED VIEW mv_pc RESET(compress_type); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER MATERIALIZED VIEW mv_pc RESET(compress_chunk_size); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER MATERIALIZED VIEW mv_pc RESET(compress_level); -- ok
+ALTER MATERIALIZED VIEW mv_pc RESET(compress_prealloc_chunks); -- ok
+\d+ mv_pc
+                             Materialized view "public.mv_pc"
+ Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+--------+---------+-----------+----------+---------+----------+--------------+-------------
+ id     | integer |           |          |         | plain    |              | 
+ c1     | text    |           |          |         | extended |              | 
+Indexes:
+    "mv_pc_idx" btree (c1) WITH (compress_type=pglz, compress_level='1', compress_chunk_size='1024', compress_prealloc_chunks='2')
+View definition:
+ SELECT id.id,
+    id.id::text AS c1
+   FROM generate_series(1, 1000) id(id);
+Options: compress_type=pglz, compress_chunk_size=2048
+
+ALTER INDEX mv_pc_idx SET(compress_type=none); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX mv_pc_idx SET(compress_chunk_size=2048); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX mv_pc_idx SET(compress_prealloc_chunks=8);  -- fail
+ERROR:  value 8 out of bounds for option "compress_prealloc_chunks"
+DETAIL:  Valid values are between "0" and "7".
+ALTER INDEX mv_pc_idx SET(compress_level=2, compress_prealloc_chunks=0); -- ok
+\d+ mv_pc_idx
+                  Index "public.mv_pc_idx"
+ Column | Type | Key? | Definition | Storage  | Stats target 
+--------+------+------+------------+----------+--------------
+ c1     | text | yes  | c1         | extended | 
+btree, for table "public.mv_pc"
+Options: compress_type=pglz, compress_chunk_size=1024, compress_level=2, compress_prealloc_chunks=0
+
+ALTER INDEX mv_pc_idx RESET(compress_type); -- fail
+ERROR:  change compress_type OPTION is not supported
+ALTER INDEX mv_pc_idx RESET(compress_chunk_size); -- fail
+ERROR:  change compress_chunk_size OPTION is not supported
+ALTER INDEX mv_pc_idx RESET(compress_level); -- ok
+ALTER INDEX mv_pc_idx RESET(compress_prealloc_chunks); -- ok
+\d+ mv_pc_idx
+                  Index "public.mv_pc_idx"
+ Column | Type | Key? | Definition | Storage  | Stats target 
+--------+------+------+------------+----------+--------------
+ c1     | text | yes  | c1         | extended | 
+btree, for table "public.mv_pc"
+Options: compress_type=pglz, compress_chunk_size=1024
+
+CHECKPOINT;
+SELECT count(*) FROM mv_pc;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT count(*) FROM mv_pc WHERE c1 = '100';
+ count 
+-------
+     1
+(1 row)
+
+REFRESH MATERIALIZED VIEW mv_pc;
+CHECKPOINT;
+SELECT count(*) FROM mv_pc;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT count(*) FROM mv_pc WHERE c1 = '100';
+ count 
+-------
+     1
+(1 row)
+
+DROP MATERIALIZED VIEW mv_pc;
+ALTER TABLESPACE pg_default RESET(default_compress_type, default_compress_level, default_compress_chunk_size, default_compress_prealloc_chunks);
+--
+-- recycling space with vacuum 
+--
+CREATE TABLE tbl_pc(id int PRIMARY KEY, c1 text) WITH(compress_type=pglz, compress_chunk_size=2048, compress_prealloc_chunks=0);
+CHECKPOINT;
+SELECT pg_relation_size('tbl_pc') size_0 \gset
+INSERT INTO tbl_pc SELECT id, id::text FROM generate_series(1,1000)id;
+CHECKPOINT;
+SELECT pg_relation_size('tbl_pc') size_1000 \gset
+SELECT :size_1000 > :size_0; -- true
+ ?column? 
+----------
+ t
+(1 row)
+
+DELETE FROM tbl_pc WHERE id > 500;
+VACUUM tbl_pc;
+SELECT pg_relation_size('tbl_pc') size_500 \gset
+SELECT count(*) FROM tbl_pc;
+ count 
+-------
+   500
+(1 row)
+
+SELECT :size_500 < :size_1000;  -- true
+ ?column? 
+----------
+ t
+(1 row)
+
+DELETE FROM tbl_pc WHERE id < 500;
+VACUUM tbl_pc;
+SELECT pg_relation_size('tbl_pc') size_1 \gset
+SELECT count(*) FROM tbl_pc;
+ count 
+-------
+     1
+(1 row)
+
+SELECT :size_1 = :size_500;  -- true
+ ?column? 
+----------
+ t
+(1 row)
+
+DELETE FROM tbl_pc;
+VACUUM tbl_pc;
+SELECT pg_relation_size('tbl_pc') size_0_2 \gset
+SELECT :size_0_2 = :size_0;
+ ?column? 
+----------
+ t
+(1 row)
+
+DROP TABLE tbl_pc;

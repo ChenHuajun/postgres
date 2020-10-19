@@ -386,7 +386,7 @@ static relopt_int intRelOpts[] =
 		{
 			"compress_level",
 			"Level of page compression.",
-			RELOPT_KIND_HEAP|RELOPT_KIND_BTREE,
+			RELOPT_KIND_HEAP | RELOPT_KIND_BTREE | RELOPT_KIND_HASH | RELOPT_KIND_GIN | RELOPT_KIND_GIST | RELOPT_KIND_SPGIST,
 			ShareUpdateExclusiveLock
 		},
 		0, -127, 127
@@ -395,7 +395,7 @@ static relopt_int intRelOpts[] =
 		{
 			"compress_chunk_size",
 			"Size of chunk to store compressed page.",
-			RELOPT_KIND_HEAP|RELOPT_KIND_BTREE,
+			RELOPT_KIND_HEAP | RELOPT_KIND_BTREE | RELOPT_KIND_HASH | RELOPT_KIND_GIN | RELOPT_KIND_GIST | RELOPT_KIND_SPGIST,
 			AccessExclusiveLock
 		},
 		BLCKSZ / 2, BLCKSZ / 8, BLCKSZ / 2
@@ -404,7 +404,7 @@ static relopt_int intRelOpts[] =
 		{
 			"compress_prealloc_chunks",
 			"Number of prealloced chunks for each block.",
-			RELOPT_KIND_HEAP|RELOPT_KIND_BTREE,
+			RELOPT_KIND_HEAP | RELOPT_KIND_BTREE | RELOPT_KIND_HASH | RELOPT_KIND_GIN | RELOPT_KIND_GIST | RELOPT_KIND_SPGIST,
 			ShareUpdateExclusiveLock
 		},
 		0, 0, 7
@@ -583,7 +583,7 @@ static relopt_enum enumRelOpts[] =
 		{
 			"compress_type",
 			"Compression type (none, pglz or zstd).",
-			RELOPT_KIND_HEAP|RELOPT_KIND_BTREE,
+			RELOPT_KIND_HEAP | RELOPT_KIND_BTREE | RELOPT_KIND_HASH | RELOPT_KIND_GIN | RELOPT_KIND_GIST | RELOPT_KIND_SPGIST,
 			AccessExclusiveLock
 		},
 		compressTypeOptValues,

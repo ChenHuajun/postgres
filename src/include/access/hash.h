@@ -26,6 +26,7 @@
 #include "storage/bufmgr.h"
 #include "storage/lockdefs.h"
 #include "utils/hsearch.h"
+#include "utils/rel.h"
 #include "utils/relcache.h"
 
 /*
@@ -268,6 +269,7 @@ typedef struct HashOptions
 {
 	int32		varlena_header_;	/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
+	PageCompressOpts	compress; /* page compress related options */
 } HashOptions;
 
 #define HashGetFillFactor(relation) \

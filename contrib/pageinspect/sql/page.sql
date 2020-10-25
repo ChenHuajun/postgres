@@ -86,3 +86,24 @@ select t_bits, t_data from heap_page_items(get_raw_page('test8', 0));
 select tuple_data_split('test8'::regclass, t_data, t_infomask, t_infomask2, t_bits)
     from heap_page_items(get_raw_page('test8', 0));
 drop table test8;
+
+-- check functions for compressed relation
+CREATE TABLE test_compressed(a int, b int) WITH(compress_type=pglz,compress_chunk_size=1024,compress_prealloc_chunks=4);
+INSERT INTO test_compressed SELECT id,id FROM generate_series(1,1000)id;
+
+SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('test_compressed',0);
+SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('xxx',0); --fail
+SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('test_compressed',1); --fail
+
+SELECT * FROM get_compress_address_items('test_compressed',0);
+SELECT * FROM get_compress_address_items('xxx',0); --fail
+SELECT * FROM get_compress_address_items('test_compressed',1); --fail
+
+-- VACUUM does not reclaim address
+DELETE FROM test_compressed WHERE ctid >= '(1,0)'::tid;
+VACUUM test_compressed;
+SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('test_compressed',0);
+SELECT * FROM get_compress_address_items('test_compressed',0);
+
+SELECT octet_length(page_compress(get_raw_page('test_compressed', 'main', 0), 'pglz', 0)) > 0 AS page_compress_test;
+SELECT octet_length(page_compress(get_raw_page('test_compressed', 'main', 0), 'xxx', 0)) > 0 AS page_compress_test; --fail

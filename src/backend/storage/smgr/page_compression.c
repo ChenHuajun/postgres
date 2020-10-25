@@ -146,8 +146,8 @@ check_and_repair_compress_address(PageCompressHeader *pcMap, uint16 chunk_size, 
 	bool need_check = false;
 
 	unused_chunks = 0;
-	max_blocknum = (BlockNumber)-1;
-	max_nonzero_blocknum = (BlockNumber)-1;
+	max_blocknum = (BlockNumber)0;
+	max_nonzero_blocknum = (BlockNumber)0;
 	max_allocated_chunkno = (pc_chunk_number_t)0;
 
 	/* if the relation had been checked in this startup, skip */
@@ -306,22 +306,20 @@ check_and_repair_compress_address(PageCompressHeader *pcMap, uint16 chunk_size, 
 			}
 		}
 
-		global_chunknos[pcAddr->chunknos[i] -1 ] = blocknum;
-		if(blocknum > max_blocknum)
-			max_blocknum = blocknum;
-
-		if(pcAddr->nchunks >0 && blocknum > max_nonzero_blocknum)
+		max_blocknum = blocknum;
+		if(pcAddr->nchunks > 0)
 			max_nonzero_blocknum = blocknum;
 
-		for(i = 0; i< pcAddr->allocated_chunks; i++)
+		for(i = 0; i < pcAddr->allocated_chunks; i++)
 		{
+			global_chunknos[pcAddr->chunknos[i] -1 ] = blocknum;
 			if(pcAddr->chunknos[i] > max_allocated_chunkno)
 				max_allocated_chunkno = pcAddr->chunknos[i];
 		}
 	}
 
 	/* check for holes in allocated chunks*/
-	for(i = 0; i < max_allocated_chunkno; blocknum++)
+	for(i = 0; i < max_allocated_chunkno; i++)
 		if(global_chunknos[i] == 0)
 			unused_chunks ++;
 

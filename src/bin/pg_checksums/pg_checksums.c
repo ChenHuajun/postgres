@@ -333,6 +333,8 @@ scan_file(const char *fn, BlockNumber segmentno, bool is_compressed_datafile)
 				}
 			}
 
+			r = pcMap->chunk_size * pcAddr->nchunks;
+
 			/* decompress chunk data */
 			if(is_compressed_block)
 			{
@@ -340,16 +342,28 @@ scan_file(const char *fn, BlockNumber segmentno, bool is_compressed_datafile)
 				if (nbytes != BLCKSZ)
 				{
 					if(nbytes == -2)
+					{
 						pg_log_error("could not recognized compression algorithm %d for file \"%s\"",
 									pcMap->algorithm, fn);
+						exit(1);
+					}
 					else
+					{
 						pg_log_error("could not decompress block %u in file \"%s\": decompress %d of %d bytes",
 									blockno, fn, nbytes, BLCKSZ);
-					exit(1);
+
+						if(mode == PG_MODE_ENABLE)
+							exit(1);
+						else
+						{
+							blocks++;
+							badblocks++;
+							current_size += r;
+							continue;
+						}
+					}
 				}
 			}
-
-			r = pcMap->chunk_size * pcAddr->nchunks;
 		}
 		else
 		{

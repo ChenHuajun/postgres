@@ -211,3 +211,57 @@ select tuple_data_split('test8'::regclass, t_data, t_infomask, t_infomask2, t_bi
 (1 row)
 
 drop table test8;
+-- check functions for compressed relation
+CREATE TABLE test_compressed(a int, b int) WITH(compress_type=pglz,compress_chunk_size=1024,compress_prealloc_chunks=4);
+INSERT INTO test_compressed SELECT id,id FROM generate_series(1,1000)id;
+SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('test_compressed',0);
+ nblocks | allocated_chunks | chunk_size | algorithm 
+---------+------------------+------------+-----------
+       5 |               20 |       1024 |         1
+(1 row)
+
+SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('xxx',0); --fail
+ERROR:  relation "xxx" does not exist
+SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('test_compressed',1); --fail
+ERROR:  could not open file "base/16384/16434.1_pca": No such file or directory
+SELECT * FROM get_compress_address_items('test_compressed',0);
+ blkno | nchunks | allocated_chunks |   chunknos    
+-------+---------+------------------+---------------
+     0 |       0 |                4 | {1,2,3,4}
+     1 |       0 |                4 | {5,6,7,8}
+     2 |       0 |                4 | {9,10,11,12}
+     3 |       0 |                4 | {13,14,15,16}
+     4 |       0 |                4 | {17,18,19,20}
+(5 rows)
+
+SELECT * FROM get_compress_address_items('xxx',0); --fail
+ERROR:  relation "xxx" does not exist
+SELECT * FROM get_compress_address_items('test_compressed',1); --fail
+ERROR:  could not open file "base/16384/16434.1_pca": No such file or directory
+-- VACUUM does not reclaim address
+DELETE FROM test_compressed WHERE ctid >= '(1,0)'::tid;
+VACUUM test_compressed;
+SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('test_compressed',0);
+ nblocks | allocated_chunks | chunk_size | algorithm 
+---------+------------------+------------+-----------
+       1 |               20 |       1024 |         1
+(1 row)
+
+SELECT * FROM get_compress_address_items('test_compressed',0);
+ blkno | nchunks | allocated_chunks |   chunknos    
+-------+---------+------------------+---------------
+     0 |       0 |                4 | {1,2,3,4}
+     1 |       0 |                4 | {5,6,7,8}
+     2 |       0 |                4 | {9,10,11,12}
+     3 |       0 |                4 | {13,14,15,16}
+     4 |       0 |                4 | {17,18,19,20}
+(5 rows)
+
+SELECT octet_length(page_compress(get_raw_page('test_compressed', 'main', 0), 'pglz', 0)) > 0 AS page_compress_test;
+ page_compress_test 
+--------------------
+ t
+(1 row)
+
+SELECT octet_length(page_compress(get_raw_page('test_compressed', 'main', 0), 'xxx', 0)) > 0 AS page_compress_test; --fail
+ERROR:  unrecognized compression algorithm xxx

@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
- * rawpage.c
- *	  Functions to extract a raw page as bytea and inspect it
+ * pcfuncs.c
+ *	  Functions to investigate the content of address file of compressed relation
  *
  * Access-method specific inspection functions are in separate files.
  *
@@ -105,6 +105,7 @@ get_compress_address_items(PG_FUNCTION_ARGS)
 	compress_address_items_state *inter_call_data = NULL;
 	FuncCallContext *fctx;
 	PageCompressHeader *pcMap;
+	PageCompressAddr *pcAddr;
 
 	if (!superuser())
 		ereport(ERROR,
@@ -115,6 +116,7 @@ get_compress_address_items(PG_FUNCTION_ARGS)
 	{
 		TupleDesc	tupdesc;
 		MemoryContext mctx;
+		uint32		blkno;
 
 		fctx = SRF_FIRSTCALL_INIT();
 		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
@@ -132,7 +134,18 @@ get_compress_address_items(PG_FUNCTION_ARGS)
 
 		inter_call_data->pcMap = pcMap;
 		if(pcMap)
-			fctx->max_calls = pg_atomic_read_u32(&pcMap->nblocks);
+			{
+				/* find the largest page with a non-empty address */
+				fctx->max_calls = pg_atomic_read_u32(&pcMap->nblocks);
+				for(blkno = fctx->max_calls; blkno < RELSEG_SIZE; blkno++)
+				{
+					pcAddr = GetPageCompressAddr(pcMap, 
+									 pcMap->chunk_size,
+									 blkno);
+					if(pcAddr->allocated_chunks != 0)
+						fctx->max_calls = blkno + 1;
+				}
+			}
 		else
 			fctx->max_calls = 0;
 
@@ -152,7 +165,6 @@ get_compress_address_items(PG_FUNCTION_ARGS)
 		char	   *values[5];
 		char		buf[256];
 		char		*p;
-		PageCompressAddr *pcAddr;
 
 		pcMap = inter_call_data->pcMap;
 		pcAddr = GetPageCompressAddr(pcMap, 

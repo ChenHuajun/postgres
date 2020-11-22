@@ -45,3 +45,6 @@ subscription/
 
 thread/
   A thread-safety-testing utility used by configure
+
+zstd/
+  Tests for page compression with zstd

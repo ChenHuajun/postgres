@@ -6460,10 +6460,10 @@ unlink_initfile(const char *initfilename, int elevel)
 static void
 SetupPageCompressForRelation(Relation relation, PageCompressOpts *compress_options)
 {
-	if(compress_options->compress_type == COMPRESS_TYPE_NONE)
+	if(compress_options->compresstype == COMPRESS_TYPE_NONE)
 	{
 		relation->rd_node.compress_algorithm = COMPRESS_TYPE_NONE;
-		relation->rd_node.compress_level = 0;
+		relation->rd_node.compresslevel = 0;
 		relation->rd_node.compress_chunk_size = 0;
 		relation->rd_node.compress_prealloc_chunks = 0;
 	}
@@ -6473,12 +6473,12 @@ SetupPageCompressForRelation(Relation relation, PageCompressOpts *compress_optio
 			elog(ERROR, "unsupported page compression on this platform");
 
 #ifndef USE_ZSTD
-		if(compress_options->compress_type == COMPRESS_TYPE_ZSTD)
+		if(compress_options->compresstype == COMPRESS_TYPE_ZSTD)
 			elog(ERROR, "unsupported compression algorithm %s","zstd");
 #endif
 
-		relation->rd_node.compress_algorithm = compress_options->compress_type;
-		relation->rd_node.compress_level = compress_options->compress_level;
+		relation->rd_node.compress_algorithm = compress_options->compresstype;
+		relation->rd_node.compresslevel = compress_options->compresslevel;
 
 		if(compress_options->compress_chunk_size != BLCKSZ / 2 &&
 			compress_options->compress_chunk_size != BLCKSZ / 4 &&

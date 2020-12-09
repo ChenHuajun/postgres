@@ -13080,10 +13080,10 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 	/* check if changed page compression store format */
 	if(newPcOpts != NULL)
 	{
-		if(newPcOpts->compress_type != rel->rd_node.compress_algorithm)
+		if(newPcOpts->compresstype != rel->rd_node.compress_algorithm)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("change compress_type OPTION is not supported")));
+						errmsg("change compresstype OPTION is not supported")));
 
 		if(rel->rd_node.compress_algorithm != COMPRESS_TYPE_NONE &&
 			newPcOpts->compress_chunk_size != rel->rd_node.compress_chunk_size)
@@ -13094,7 +13094,7 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 		if(rel->rd_node.compress_algorithm != COMPRESS_TYPE_NONE)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("change compress_type OPTION is not supported")));
+						errmsg("change compresstype OPTION is not supported")));
 	}
 
 	/*

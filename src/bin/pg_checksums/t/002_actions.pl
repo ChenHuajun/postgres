@@ -99,7 +99,7 @@ sub check_compressed_relation_corruption
 
 	$node->safe_psql(
 		'postgres',
-		"CREATE TABLE $table (a int) WITH(compress_type=pglz, autovacuum_enabled=false);
+		"CREATE TABLE $table (a int) WITH(compresstype=pglz, autovacuum_enabled=false);
 		 INSERT INTO $table SELECT a FROM generate_series(1,10000)a;");
 
 	$node->safe_psql('postgres',
@@ -197,9 +197,9 @@ append_to_file "$pgdata/global/pg_internal.init.123", "foo";
 $node->start;
 $node->safe_psql(
 	'postgres',
-	"CREATE TABLE compressed_table(a int) WITH(compress_type=pglz, autovacuum_enabled=false);
+	"CREATE TABLE compressed_table(a int) WITH(compresstype=pglz, autovacuum_enabled=false);
 	 INSERT INTO compressed_table SELECT a FROM generate_series(1,10000)a;
-	 CREATE INDEX ON compressed_table(a) WITH(compress_type=pglz);");
+	 CREATE INDEX ON compressed_table(a) WITH(compresstype=pglz);");
 $node->stop;
 
 # Enable checksums.

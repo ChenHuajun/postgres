@@ -88,7 +88,7 @@ select tuple_data_split('test8'::regclass, t_data, t_infomask, t_infomask2, t_bi
 drop table test8;
 
 -- check functions for compressed relation
-CREATE TABLE test_compressed(a int, b int) WITH(compress_type=pglz,compress_chunk_size=1024,compress_prealloc_chunks=4);
+CREATE TABLE test_compressed(a int, b int) WITH(compresstype=pglz,compress_chunk_size=1024,compress_prealloc_chunks=4);
 INSERT INTO test_compressed SELECT id,id FROM generate_series(1,1000)id;
 
 SELECT nblocks, allocated_chunks, chunk_size, algorithm FROM get_compress_address_header('test_compressed',0);

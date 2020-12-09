@@ -89,7 +89,7 @@ ok(-f "$pgdata/${baseUnloggedPath}_init", 'unlogged init fork in base');
 ok(-f "$pgdata/$baseUnloggedPath",        'unlogged main fork in base');
 
 # Create an compressed table to test that pca and pcd file are copied.
-$node->safe_psql('postgres', 'CREATE TABLE base_compressed (id int) WITH(compress_type=pglz)');
+$node->safe_psql('postgres', 'CREATE TABLE base_compressed (id int) WITH(compresstype=pglz)');
 
 my $baseCompressedPath = $node->safe_psql('postgres',
 	q{select pg_relation_filepath('base_compressed')});

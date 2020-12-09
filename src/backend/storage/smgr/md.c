@@ -125,7 +125,7 @@ static MemoryContext MdCxt;		/* context for all MdfdVec objects */
 	(reln->smgr_rnode.node.compress_algorithm != COMPRESS_TYPE_NONE && forkNum == MAIN_FORKNUM)
 
 #define PAGE_COMPRESS_ALGORITHM(reln) (reln->smgr_rnode.node.compress_algorithm)
-#define PAGE_COMPRESS_LEVEL(reln) (reln->smgr_rnode.node.compress_level)
+#define PAGE_COMPRESS_LEVEL(reln) (reln->smgr_rnode.node.compresslevel)
 #define PAGE_COMPRESS_CHUNK_SIZE(reln) (reln->smgr_rnode.node.compress_chunk_size)
 #define PAGE_COMPRESS_PREALLOC_CHUNKS(reln) (reln->smgr_rnode.node.compress_prealloc_chunks)
 

@@ -384,7 +384,7 @@ static relopt_int intRelOpts[] =
 	},
 	{
 		{
-			"compress_level",
+			"compresslevel",
 			"Level of page compression.",
 			RELOPT_KIND_HEAP | RELOPT_KIND_BTREE | RELOPT_KIND_HASH | RELOPT_KIND_GIN | RELOPT_KIND_GIST | RELOPT_KIND_SPGIST,
 			ShareUpdateExclusiveLock
@@ -411,7 +411,7 @@ static relopt_int intRelOpts[] =
 	},
 	{
 		{
-			"default_compress_level",
+			"default_compresslevel",
 			"Default level of page compression.",
 			RELOPT_KIND_TABLESPACE,
 			ShareUpdateExclusiveLock
@@ -581,7 +581,7 @@ static relopt_enum enumRelOpts[] =
 	},
 	{
 		{
-			"compress_type",
+			"compresstype",
 			"Compression type (none, pglz or zstd).",
 			RELOPT_KIND_HEAP | RELOPT_KIND_BTREE | RELOPT_KIND_HASH | RELOPT_KIND_GIN | RELOPT_KIND_GIST | RELOPT_KIND_SPGIST,
 			AccessExclusiveLock
@@ -592,7 +592,7 @@ static relopt_enum enumRelOpts[] =
 	},
 	{
 		{
-			"default_compress_type",
+			"default_compresstype",
 			"Default compression type (none, pglz or zstd).",
 			RELOPT_KIND_TABLESPACE,
 			ShareUpdateExclusiveLock
@@ -1945,10 +1945,10 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, vacuum_index_cleanup)},
 		{"vacuum_truncate", RELOPT_TYPE_BOOL,
 		offsetof(StdRdOptions, vacuum_truncate)},
-		{"compress_type", RELOPT_TYPE_ENUM,
-		offsetof(StdRdOptions, compress) + offsetof(PageCompressOpts, compress_type)},
-		{"compress_level", RELOPT_TYPE_INT,
-		offsetof(StdRdOptions, compress) + offsetof(PageCompressOpts, compress_level)},
+		{"compresstype", RELOPT_TYPE_ENUM,
+		offsetof(StdRdOptions, compress) + offsetof(PageCompressOpts, compresstype)},
+		{"compresslevel", RELOPT_TYPE_INT,
+		offsetof(StdRdOptions, compress) + offsetof(PageCompressOpts, compresslevel)},
 		{"compress_chunk_size", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, compress) + offsetof(PageCompressOpts, compress_chunk_size)},
 		{"compress_prealloc_chunks", RELOPT_TYPE_INT,
@@ -2160,8 +2160,8 @@ tablespace_reloptions(Datum reloptions, bool validate)
 		{"seq_page_cost", RELOPT_TYPE_REAL, offsetof(TableSpaceOpts, seq_page_cost)},
 		{"effective_io_concurrency", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, effective_io_concurrency)},
 		{"maintenance_io_concurrency", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, maintenance_io_concurrency)},
-		{"default_compress_type", RELOPT_TYPE_ENUM, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compress_type)},
-		{"default_compress_level", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compress_level)},
+		{"default_compresstype", RELOPT_TYPE_ENUM, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compresstype)},
+		{"default_compresslevel", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compresslevel)},
 		{"default_compress_chunk_size", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compress_chunk_size)},
 		{"default_compress_prealloc_chunks", RELOPT_TYPE_INT, offsetof(TableSpaceOpts, compress) + offsetof(PageCompressOpts, compress_prealloc_chunks)}
 	};

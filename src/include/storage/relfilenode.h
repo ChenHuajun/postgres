@@ -61,7 +61,7 @@ typedef struct RelFileNode
 	Oid			relNode;		/* relation */
 	uint32		compress_chunk_size;		/* chunk size of compressed data */
 	uint8		compress_algorithm;			/* compress algorithm */
-	int8		compress_level;				/* compress level */
+	int8		compresslevel;				/* compress level */
 	uint8		compress_prealloc_chunks;	/* prealloced chunks to store compressed data */
 } RelFileNode;
 

@@ -41,9 +41,9 @@ buildCompressReloptions(PageCompressOpts *pcOpt)
 	/* We build new array using accumArrayResult */
 	astate = NULL;
 
-	/* compress_type */
+	/* compresstype */
 	value = NULL;
-	switch (pcOpt->compress_type)
+	switch (pcOpt->compresstype)
 	{
 		case COMPRESS_TYPE_PGLZ:
 			value = "pglz";
@@ -59,29 +59,29 @@ buildCompressReloptions(PageCompressOpts *pcOpt)
 
 	if(value != NULL)
 	{
-		len = VARHDRSZ + strlen("compress_type") + 1 + strlen(value);
+		len = VARHDRSZ + strlen("compresstype") + 1 + strlen(value);
 
 		/* +1 leaves room for sprintf's trailing null */
 		t = (text *) palloc(len + 1);
 		SET_VARSIZE(t, len);
-		sprintf(VARDATA(t), "compress_type=%s", value);
+		sprintf(VARDATA(t), "compresstype=%s", value);
 
 		astate = accumArrayResult(astate, PointerGetDatum(t),
 									false, TEXTOID,
 									CurrentMemoryContext);
 	}
 
-	/* compress_level */
-	if(pcOpt->compress_level != 0)
+	/* compresslevel */
+	if(pcOpt->compresslevel != 0)
 	{
-		value = psprintf("%d",pcOpt->compress_level);
+		value = psprintf("%d",pcOpt->compresslevel);
 
-		len = VARHDRSZ + strlen("compress_level") + 1 + strlen(value);
+		len = VARHDRSZ + strlen("compresslevel") + 1 + strlen(value);
 
 		/* +1 leaves room for sprintf's trailing null */
 		t = (text *) palloc(len + 1);
 		SET_VARSIZE(t, len);
-		sprintf(VARDATA(t), "compress_level=%s", value);
+		sprintf(VARDATA(t), "compresslevel=%s", value);
 		pfree(value);
 
 		astate = accumArrayResult(astate, PointerGetDatum(t),
@@ -89,7 +89,7 @@ buildCompressReloptions(PageCompressOpts *pcOpt)
 									CurrentMemoryContext);
 	}
 
-	/* compress_level */
+	/* compresslevel */
 	if(pcOpt->compress_chunk_size != BLCKSZ / 2)
 	{
 		value = psprintf("%d",pcOpt->compress_chunk_size);
@@ -107,7 +107,7 @@ buildCompressReloptions(PageCompressOpts *pcOpt)
 									CurrentMemoryContext);
 	}
 
-	/* compress_level */
+	/* compresslevel */
 	if(pcOpt->compress_prealloc_chunks != 0)
 	{
 		value = psprintf("%d",pcOpt->compress_prealloc_chunks);

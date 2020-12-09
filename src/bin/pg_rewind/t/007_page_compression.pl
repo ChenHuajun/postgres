@@ -16,21 +16,21 @@ sub run_test
 	RewindTest::start_primary();
 
 	# Create a test table and insert a row in primary.
-	primary_psql("CREATE TABLE tbl1 (d text) WITH(compress_type=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
+	primary_psql("CREATE TABLE tbl1 (d text) WITH(compresstype=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
 	primary_psql("INSERT INTO tbl1 VALUES ('in primary')");
 
 	# This test table will be used to test truncation, i.e. the table
 	# is extended in the old primary after promotion
-	primary_psql("CREATE TABLE trunc_tbl (d text) WITH(compress_type=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
+	primary_psql("CREATE TABLE trunc_tbl (d text) WITH(compresstype=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
 	primary_psql("INSERT INTO trunc_tbl VALUES ('in primary')");
 
 	# This test table will be used to test the "copy-tail" case, i.e. the
 	# table is truncated in the old primary after promotion
-	primary_psql("CREATE TABLE tail_tbl (id integer, d text) WITH(compress_type=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
+	primary_psql("CREATE TABLE tail_tbl (id integer, d text) WITH(compresstype=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
 	primary_psql("INSERT INTO tail_tbl VALUES (0, 'in primary')");
 
 	# This test table is dropped in the old primary after promotion.
-	primary_psql("CREATE TABLE drop_tbl (d text) WITH(compress_type=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
+	primary_psql("CREATE TABLE drop_tbl (d text) WITH(compresstype=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
 	primary_psql("INSERT INTO drop_tbl VALUES ('in primary')");
 
 	primary_psql("CHECKPOINT");
@@ -74,7 +74,7 @@ sub run_test
 	primary_psql("DROP TABLE drop_tbl");
 
 	# Create new_tbl in standby. pg_rewind should copy it from source.
-	standby_psql("CREATE TABLE new_tbl (d text) WITH(compress_type=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
+	standby_psql("CREATE TABLE new_tbl (d text) WITH(compresstype=pglz, compress_chunk_size=1024, compress_prealloc_chunks=2)");
 	standby_psql("INSERT INTO new_tbl VALUES ('in standby')");
 
 	# Before running pg_rewind, do a couple of extra tests with several

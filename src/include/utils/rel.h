@@ -294,7 +294,7 @@ typedef struct AutoVacOpts
 	float8		analyze_scale_factor;
 } AutoVacOpts;
 
-/* PageCompressOpts->compress_type values */
+/* PageCompressOpts->compresstype values */
 typedef enum compressTypeOption
 {
 	COMPRESS_TYPE_NONE = 0,
@@ -305,8 +305,8 @@ typedef enum compressTypeOption
  /* page compress related reloptions. */
 typedef struct PageCompressOpts
 {
-	compressTypeOption	compress_type; 				/* compress algorithm */
-	int					compress_level;		/* compress level */
+	compressTypeOption	compresstype; 				/* compress algorithm */
+	int					compresslevel;		/* compress level */
 	int					compress_chunk_size;		/* chunk size of compressed data */
 	int					compress_prealloc_chunks;	/* prealloced chunks to store compressed data */
 } PageCompressOpts;

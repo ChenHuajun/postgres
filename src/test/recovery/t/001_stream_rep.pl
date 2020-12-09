@@ -44,7 +44,7 @@ $node_primary->safe_psql('postgres',
 	"CREATE TABLE tab_int AS SELECT generate_series(1,1002) AS a");
 
 $node_primary->safe_psql('postgres',
-	"CREATE TABLE tab_int_compressed WITH(compress_type=pglz)AS SELECT generate_series(1,1002) AS a");
+	"CREATE TABLE tab_int_compressed WITH(compresstype=pglz)AS SELECT generate_series(1,1002) AS a");
 
 # Wait for standbys to catch up
 $node_primary->wait_for_catchup($node_standby_1, 'replay',

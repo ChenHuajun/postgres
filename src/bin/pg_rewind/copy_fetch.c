@@ -305,7 +305,7 @@ rewind_copy_compressed_relation_range(const char *path, int chunk_size,
 			compressedpagemap = compressedpagemap->next;
 		}
 
-		if(compressedpagemap == NULL)
+		if(compressedpagemap == NULL || compressedpagemap->blkno != blkno)
 			pg_fatal("could not find compressedpagemap for block %d of file \"%s\"",
 					 blkno, path);
 
@@ -314,6 +314,7 @@ rewind_copy_compressed_relation_range(const char *path, int chunk_size,
 			int		readlen;
 			int		seekpos;
 			int		length = chunk_size;
+			int		chunkindex = j;
 			pc_chunk_number_t	chunkno = compressedpagemap->chunknos[j];
 
 			seekpos = OffsetOfPageCompressChunk(chunk_size, chunkno);
@@ -329,13 +330,16 @@ rewind_copy_compressed_relation_range(const char *path, int chunk_size,
 				pg_fatal("could not seek in source file: %m");
 
 			readlen = read(fd, buf.data, length);
-			if (readlen < 0)
-				pg_fatal("could not read file \"%s\": %m",
-						srcpath);
-			else if (readlen == 0)
-				pg_fatal("unexpected EOF while reading file \"%s\"", srcpath);
+			if (readlen != length)
+			{
+				if (readlen < 0)
+					pg_fatal("could not read file \"%s\": %m", srcpath);
+				else
+					pg_fatal("could not read file \"%s\": read %d of %zu", 
+							srcpath, readlen, (Size) length);
+			}
 
-			write_target_compressed_relation_chunk(buf.data, readlen, blkno, chunkno,
+			write_target_compressed_relation_chunk(buf.data, readlen, blkno, chunkindex,
 												   compressedpagemap->nchunks, prealloc_chunks);
 		}
 	}

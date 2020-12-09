@@ -364,7 +364,6 @@ void
 process_target_file(const char *path, file_type_t type, size_t oldsize,
 					const char *link_target, const PageCompressHeader *pchdr)
 {
-	bool		exists;
 	char		localpath[MAXPGPATH];
 	struct stat statbuf;
 	file_entry_t key;
@@ -1041,7 +1040,7 @@ fill_compressed_relation_address(file_entry_t *entry, const char *path, PageComp
 		   use the smaller one. */
 		for(i = 0; i< compressedpagemap->nchunks; i++)
 		{
-			if(compressedpagemap->chunknos[i] == 0)
+			if(pcAddr->chunknos[i] == 0)
 			{
 				compressedpagemap->nchunks = i;
 				break;
@@ -1082,7 +1081,7 @@ fill_compressed_relation_address(file_entry_t *entry, const char *path, PageComp
 			use the smaller one. */
 			for(i = 0; i< compressedpagemap->nchunks; i++)
 			{
-				if(compressedpagemap->chunknos[i] == 0)
+				if(pcAddr->chunknos[i] == 0)
 				{
 					compressedpagemap->nchunks = i;
 					break;

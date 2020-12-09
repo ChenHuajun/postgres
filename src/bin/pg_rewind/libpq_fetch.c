@@ -422,7 +422,7 @@ receiveCompressedRelationAddressFileChunks(filemap_t *map, const char *sql)
  * chunk	bytea	-- file content
  * iscompressedchunk	bool	-- if this is a chunk for compressed relation data file
  * blocknum	int4	-- block number of this compressed chunk
- * chunknum	int4	-- chunk number of this compressed chunk
+ * chunkindex int4	-- chunk index of this compressed chunk
  * nchunks	int4	-- number of chunks for this block
  * prealloc_chunks	int4	-- prealloc_chunks for this relation
  *----
@@ -545,7 +545,7 @@ receiveFileChunks(const char *sql)
 		{
 			pg_log_debug("received null value for chunk for file \"%s\", file has been deleted",
 						 filename);
-
+			/* TODO compressed relation*/
 			if(!iscompressedchunk)
 				remove_target_file(filename, true);
 			pg_free(filename);
@@ -555,13 +555,13 @@ receiveFileChunks(const char *sql)
 
 		if(iscompressedchunk)
 		{
-			int		blocknum, chunknum, nchunks, prealloc_chunks;
+			int		blocknum, chunkindex, nchunks, prealloc_chunks;
 
 			memcpy(&blocknum, PQgetvalue(res, 0, 4), sizeof(int32));
 			blocknum = pg_ntoh32(blocknum);
 
-			memcpy(&chunknum, PQgetvalue(res, 0, 5), sizeof(int32));
-			chunknum = pg_ntoh32(chunknum);
+			memcpy(&chunkindex, PQgetvalue(res, 0, 5), sizeof(int32));
+			chunkindex = pg_ntoh32(chunkindex);
 
 			memcpy(&nchunks, PQgetvalue(res, 0, 6), sizeof(int32));
 			nchunks = pg_ntoh32(nchunks);
@@ -570,13 +570,14 @@ receiveFileChunks(const char *sql)
 			prealloc_chunks = pg_ntoh32(prealloc_chunks);
 
 			pg_log_debug("received compressed chunk for file \"%s\", offset %lld, size %d,"
-						 " blocknum %d, chunknum %d, nchunks %d, prealloc_chunks %d",
+						 " blocknum %d, chunkindex %d, nchunks %d, prealloc_chunks %d",
 						filename, (long long int) chunkoff, chunksize,
-						blocknum, chunknum, nchunks, prealloc_chunks);
+						blocknum, chunkindex, nchunks, prealloc_chunks);
 
+			filename[filenamelen - 4] = '\0';
 			open_target_compressed_relation(filename);
 
-			write_target_compressed_relation_chunk(chunk, chunksize, blocknum, chunknum, nchunks, prealloc_chunks);
+			write_target_compressed_relation_chunk(chunk, chunksize, blocknum, chunkindex, nchunks, prealloc_chunks);
 		}
 		else
 		{
@@ -704,6 +705,7 @@ fetch_compressed_relation_range(const char *path, int chunk_size, BlockNumber bl
 		{
 			uint64		begin;
 			int			length = chunk_size;
+			int			chunkindex = j;
 			pc_chunk_number_t	chunkno = compressedpagemap->chunknos[j];
 
 			begin = OffsetOfPageCompressChunk(chunk_size, chunkno);
@@ -716,7 +718,7 @@ fetch_compressed_relation_range(const char *path, int chunk_size, BlockNumber bl
 			}
 
 			snprintf(linebuf, sizeof(linebuf), "%s_pcd\t" UINT64_FORMAT "\t%u\ttrue\t%u\t%u\t%u\t%u\n",
-					 path, begin, length, blkno, chunkno,
+					 path, begin, length, blkno, chunkindex,
 					 compressedpagemap->nchunks, prealloc_chunks);
 
 			if (PQputCopyData(conn, linebuf, strlen(linebuf)) != 1)
@@ -855,7 +857,7 @@ libpq_executeFileMap(filemap_t *map)
 	 * need to fetch.
 	 */
 	sql = "CREATE TEMPORARY TABLE fetchchunks(path text, begin int8, len int4,"
-	    			" iscompressedchunk bool, blocknum int4, chunknum int4,"
+	    			" iscompressedchunk bool, blocknum int4, chunkindex int4,"
 					" nchunks int4, prealloc_chunks int4);";
 	run_simple_command(sql);
 
@@ -937,7 +939,7 @@ libpq_executeFileMap(filemap_t *map)
 	sql =
 		"SELECT path, begin,\n"
 		"  pg_read_binary_file(path, begin, len, true) AS chunk,\n"
-		"  iscompressedchunk, blocknum, chunknum, nchunks, prealloc_chunks\n"
+		"  iscompressedchunk, blocknum, chunkindex, nchunks, prealloc_chunks\n"
 		"FROM fetchchunks\n";
 
 	receiveFileChunks(sql);

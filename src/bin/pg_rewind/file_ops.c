@@ -449,7 +449,7 @@ truncate_target_compressed_relation(const char *path, int newblocks)
 
 
 void
-write_target_compressed_relation_chunk(char *buf, size_t size, int blocknum, int chunknum, int nchunks, int prealloc_chunks)
+write_target_compressed_relation_chunk(char *buf, size_t size, int blocknum, int chunkindex, int nchunks, int prealloc_chunks)
 {
 	PageCompressAddr	*pcAddr;
 	int					i;
@@ -499,7 +499,7 @@ write_target_compressed_relation_chunk(char *buf, size_t size, int blocknum, int
 		if(writeleft > chunk_size)
 			writeleft = chunk_size;
 
-		seekpos = OffsetOfPageCompressChunk(chunk_size, pcAddr->chunknos[chunknum + writed / chunk_size]);
+		seekpos = OffsetOfPageCompressChunk(chunk_size, pcAddr->chunknos[chunkindex + writed / chunk_size]);
 
 		if (lseek(dstfd, seekpos, SEEK_SET) == -1)
 			pg_fatal("could not seek in target file \"%s\": %m",

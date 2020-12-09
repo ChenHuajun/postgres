@@ -146,9 +146,9 @@ check_and_repair_compress_address(PageCompressHeader *pcMap, uint16 chunk_size, 
 	bool need_check = false;
 
 	unused_chunks = 0;
-	max_blocknum = (BlockNumber)0;
-	max_nonzero_blocknum = (BlockNumber)0;
-	max_allocated_chunkno = (pc_chunk_number_t)0;
+	max_blocknum = (BlockNumber) -1;
+	max_nonzero_blocknum = (BlockNumber) -1;
+	max_allocated_chunkno = (pc_chunk_number_t) 0;
 
 	/* if the relation had been checked in this startup, skip */
 	memcpy(last_recovery_start_time_buf, &pcMap->last_recovery_start_time,sizeof(TimestampTz));
@@ -198,8 +198,8 @@ check_and_repair_compress_address(PageCompressHeader *pcMap, uint16 chunk_size, 
 		PageCompressAddr *pcAddr = GetPageCompressAddr(pcMap, chunk_size, blocknum);
 
 		/* skip when found first zero filled block after nblocks */
-		if(blocknum >= (BlockNumber)nblocks && pcAddr->allocated_chunks == 0)
-			break;
+		/*if(blocknum >= (BlockNumber)nblocks && pcAddr->allocated_chunks == 0)
+			break;*/
 
 		/* check allocated_chunks for one page */
 		if(pcAddr->allocated_chunks > BLCKSZ / chunk_size)
@@ -312,7 +312,7 @@ check_and_repair_compress_address(PageCompressHeader *pcMap, uint16 chunk_size, 
 
 		for(i = 0; i < pcAddr->allocated_chunks; i++)
 		{
-			global_chunknos[pcAddr->chunknos[i] -1 ] = blocknum;
+			global_chunknos[pcAddr->chunknos[i] -1 ] = blocknum + 1;
 			if(pcAddr->chunknos[i] > max_allocated_chunkno)
 				max_allocated_chunkno = pcAddr->chunknos[i];
 		}
@@ -330,19 +330,28 @@ check_and_repair_compress_address(PageCompressHeader *pcMap, uint16 chunk_size, 
 						unused_chunks, max_allocated_chunkno, path),
 				 errhint("You may need to run VACUMM FULL to optimize space allocation, or run REINDEX if it is an index.")));
 
-	/* update head of compress file */
-	if(nblocks != (max_nonzero_blocknum + 1) ||
-	   allocated_chunks != max_allocated_chunkno)
+	/* update nblocks in head of compressed file */
+	if(nblocks < max_nonzero_blocknum + 1)
 	{
 		pg_atomic_write_u32(&pcMap->nblocks, max_nonzero_blocknum + 1);
 		pg_atomic_write_u32(&pcMap->last_synced_nblocks, max_nonzero_blocknum + 1);
+
+		ereport(WARNING,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("update nblocks head of compressed file \"%s\". old: %u, new: %u",
+						 path, nblocks, max_nonzero_blocknum + 1)));
+	}
+
+	/* update allocated_chunks in head of compress file */
+	if(allocated_chunks != max_allocated_chunkno)
+	{
 		pg_atomic_write_u32(&pcMap->allocated_chunks, max_allocated_chunkno);
 		pg_atomic_write_u32(&pcMap->last_synced_allocated_chunks, max_allocated_chunkno);
 
 		ereport(WARNING,
 				(errcode(ERRCODE_DATA_CORRUPTED),
-				 errmsg("update head of compress file \"%s\". old allocated_chunks/nblocks %u/%u, new allocated_chunks/nblocks %u/%u",
-						 path, allocated_chunks, nblocks, max_allocated_chunkno, max_nonzero_blocknum + 1)));
+				 errmsg("update allocated_chunks in head of compressed file \"%s\". old: %u, new: %u",
+						 path, allocated_chunks, max_allocated_chunkno)));
 	}
 
 	/* clean compress address after max_blocknum + 1 */
